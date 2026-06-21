@@ -3,367 +3,282 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Pallaw — AI Question Generator</title>
-    <meta
-      name="description"
-      content="Upload a sample question CSV, pick a topic, and generate brand-new math questions with AI. Export back to CSV instantly."
-    />
+    <title>Pallaw — AI Question Platform</title>
+    <meta name="description" content="Generate exam-ready math MCQs and auto-add solutions from CSV. Powered by Groq." />
 
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         theme: {
           extend: {
-            fontFamily: {
-              sans: ['Inter', 'system-ui', 'sans-serif'],
-            },
+            fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
             colors: {
-              ink: {
-                900: '#0a0a0a',
-                800: '#171717',
-                700: '#262626',
-                500: '#737373',
-                400: '#a3a3a3',
-                300: '#d4d4d4',
-                100: '#f5f5f5',
-              },
+              ink: { 900:'#0a0a0a',800:'#171717',700:'#262626',600:'#404040',500:'#737373',400:'#a3a3a3',300:'#d4d4d4',200:'#e5e5e5',100:'#f5f5f5',50:'#fafafa' },
             },
             boxShadow: {
               glow: '0 0 0 1px rgba(0,0,0,0.04), 0 8px 30px rgba(0,0,0,0.08)',
-              card: '0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.06)',
+              card: '0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.05)',
             },
             keyframes: {
-              'fade-up': {
-                '0%': { opacity: 0, transform: 'translateY(12px)' },
-                '100%': { opacity: 1, transform: 'translateY(0)' },
-              },
-              shimmer: {
-                '100%': { transform: 'translateX(100%)' },
-              },
+              'fade-up': { '0%':{opacity:0,transform:'translateY(10px)'}, '100%':{opacity:1,transform:'translateY(0)'} },
             },
-            animation: {
-              'fade-up': 'fade-up 0.5s ease-out both',
-            },
+            animation: { 'fade-up':'fade-up .4s ease-out both' },
           },
         },
       };
     </script>
-
-    <!-- Inter font -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
-      rel="stylesheet"
-    />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 
     <style>
-      body {
-        -webkit-font-smoothing: antialiased;
-        background-color: #fafafa;
-      }
-      /* Subtle dotted grid background */
-      .bg-grid {
-        background-image: radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.06) 1px, transparent 0);
-        background-size: 28px 28px;
-      }
-      .glass {
-        background: rgba(255, 255, 255, 0.7);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-      }
-      .gradient-text {
-        background: linear-gradient(135deg, #6d28d9 0%, #2563eb 50%, #0ea5e9 100%);
-        -webkit-background-clip: text;
-        background-clip: text;
-        -webkit-text-fill-color: transparent;
-      }
-      .btn-shine {
-        position: relative;
-        overflow: hidden;
-      }
-      .btn-shine::after {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 60%;
-        height: 100%;
-        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.25), transparent);
-        transform: translateX(-150%);
-      }
-      .btn-shine:hover::after {
-        animation: shimmer 0.9s ease;
-      }
-      @keyframes shimmer {
-        100% {
-          transform: translateX(250%);
-        }
-      }
-      .spinner {
-        width: 16px;
-        height: 16px;
-        border: 2px solid rgba(255, 255, 255, 0.4);
-        border-top-color: #fff;
-        border-radius: 50%;
-        animation: spin 0.7s linear infinite;
-      }
-      @keyframes spin {
-        to {
-          transform: rotate(360deg);
-        }
-      }
-      /* Custom scrollbar for tables */
-      .nice-scroll::-webkit-scrollbar {
-        height: 8px;
-        width: 8px;
-      }
-      .nice-scroll::-webkit-scrollbar-thumb {
-        background: #d4d4d4;
-        border-radius: 999px;
-      }
-      .nice-scroll::-webkit-scrollbar-thumb:hover {
-        background: #a3a3a3;
-      }
+      body { -webkit-font-smoothing: antialiased; }
+      .gradient-text { background: linear-gradient(135deg,#6d28d9,#2563eb 55%,#0ea5e9); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+      .spinner { width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite; }
+      .spinner-dark { border-color:rgba(0,0,0,.15);border-top-color:#171717; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .nice-scroll::-webkit-scrollbar { height:8px;width:8px; }
+      .nice-scroll::-webkit-scrollbar-thumb { background:#d4d4d4;border-radius:999px; }
+      .nice-scroll::-webkit-scrollbar-thumb:hover { background:#a3a3a3; }
+      .nav-link.active { background:#171717;color:#fff; }
+      .nav-link.active svg { color:#fff; }
+      .btn-shine { position:relative; overflow:hidden; }
+      .btn-shine::after { content:'';position:absolute;top:0;left:0;width:60%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.25),transparent);transform:translateX(-150%); }
+      .btn-shine:hover::after { animation:sh .9s ease; }
+      @keyframes sh { 100%{transform:translateX(250%);} }
+      [data-view]{ display:none; }
+      [data-view].view-active{ display:block; }
     </style>
   </head>
 
-  <body class="font-sans text-ink-900 antialiased">
-    <!-- ================= NAV ================= -->
-    <nav class="glass sticky top-0 z-40 border-b border-black/5">
-      <div class="mx-auto flex max-w-6xl items-center justify-between px-5 py-3.5">
-        <div class="flex items-center gap-2.5">
-          <div
-            class="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-sky-500 text-lg font-bold text-white shadow-glow"
-          >
-            ∑
-          </div>
+  <body class="bg-ink-50 font-sans text-ink-900">
+    <div class="flex min-h-screen">
+      <!-- ============ SIDEBAR ============ -->
+      <aside id="sidebar" class="fixed inset-y-0 left-0 z-40 w-64 -translate-x-full border-r border-ink-200 bg-white transition-transform lg:translate-x-0">
+        <div class="flex h-16 items-center gap-2.5 border-b border-ink-200 px-5">
+          <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-sky-500 text-lg font-bold text-white shadow-glow">∑</div>
           <div class="leading-tight">
-            <span class="text-[15px] font-bold tracking-tight">Pallaw</span>
-            <span class="ml-1.5 rounded-full bg-ink-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-500">AI</span>
-          </div>
-        </div>
-
-        <div class="flex items-center gap-2 text-xs">
-          <span id="dbStatus" class="hidden items-center gap-1.5 rounded-full border border-black/5 bg-white px-3 py-1.5 font-medium text-ink-500 sm:flex"></span>
-          <span id="keyStatus" class="flex items-center gap-1.5 rounded-full border border-black/5 bg-white px-3 py-1.5 font-medium text-ink-500">
-            <span class="h-1.5 w-1.5 rounded-full bg-ink-300"></span>checking…
-          </span>
-        </div>
-      </div>
-    </nav>
-
-    <!-- ================= HERO ================= -->
-    <header class="bg-grid relative overflow-hidden border-b border-black/5">
-      <div class="pointer-events-none absolute inset-x-0 top-0 h-72 bg-gradient-to-b from-violet-100/40 to-transparent"></div>
-      <div class="relative mx-auto max-w-3xl px-5 py-16 text-center sm:py-20">
-        <div
-          class="animate-fade-up mb-5 inline-flex items-center gap-2 rounded-full border border-black/5 bg-white/80 px-3.5 py-1.5 text-xs font-medium text-ink-500 shadow-sm"
-        >
-          <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500"></span>
-          Powered by Groq · CSV in → CSV out
-        </div>
-        <h1 class="animate-fade-up text-4xl font-extrabold leading-[1.1] tracking-tight sm:text-5xl" style="animation-delay: 60ms">
-          Generate exam-ready
-          <span class="gradient-text">math questions</span><br class="hidden sm:block" />
-          from a single sample file.
-        </h1>
-        <p class="animate-fade-up mx-auto mt-5 max-w-xl text-base leading-relaxed text-ink-500 sm:text-lg" style="animation-delay: 120ms">
-          Upload a sample CSV, type any topic, and let AI write fresh questions in the
-          exact same structure. Export everything back to CSV in one click.
-        </p>
-        <div class="animate-fade-up mt-8 flex items-center justify-center gap-3" style="animation-delay: 180ms">
-          <a
-            href="#app"
-            class="btn-shine inline-flex items-center gap-2 rounded-xl bg-ink-900 px-5 py-3 text-sm font-semibold text-white shadow-glow transition hover:bg-ink-800"
-          >
-            Start generating
-            <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z"/></svg>
-          </a>
-          <a href="#how" class="rounded-xl px-5 py-3 text-sm font-semibold text-ink-700 transition hover:text-ink-900">
-            How it works
-          </a>
-        </div>
-      </div>
-    </header>
-
-    <!-- ================= HOW IT WORKS ================= -->
-    <section id="how" class="mx-auto max-w-6xl px-5 py-14">
-      <div class="grid gap-4 sm:grid-cols-3">
-        <div class="rounded-2xl border border-black/5 bg-white p-6 shadow-card">
-          <div class="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-violet-50 text-violet-600">
-            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5V18a2 2 0 002 2h14a2 2 0 002-2v-1.5M12 3v13m0-13l-4 4m4-4l4 4"/></svg>
-          </div>
-          <h3 class="text-base font-semibold">1 · Upload sample CSV</h3>
-          <p class="mt-1.5 text-sm leading-relaxed text-ink-500">We auto-detect your columns and table structure — any format works.</p>
-        </div>
-        <div class="rounded-2xl border border-black/5 bg-white p-6 shadow-card">
-          <div class="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-          </div>
-          <h3 class="text-base font-semibold">2 · Type a topic</h3>
-          <p class="mt-1.5 text-sm leading-relaxed text-ink-500">Free-text topic box (no dropdown). Choose how many questions you want.</p>
-        </div>
-        <div class="rounded-2xl border border-black/5 bg-white p-6 shadow-card">
-          <div class="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-sky-50 text-sky-600">
-            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/></svg>
-          </div>
-          <h3 class="text-base font-semibold">3 · Export to CSV</h3>
-          <p class="mt-1.5 text-sm leading-relaxed text-ink-500">Download all generated questions with the exact same columns as your input.</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- ================= APP ================= -->
-    <main id="app" class="mx-auto max-w-6xl px-5 pb-24">
-      <div class="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
-        <!-- LEFT: workflow -->
-        <div class="space-y-6">
-          <!-- Upload card -->
-          <section class="rounded-2xl border border-black/5 bg-white p-6 shadow-card">
-            <div class="mb-4 flex items-center gap-2">
-              <span class="flex h-6 w-6 items-center justify-center rounded-lg bg-ink-900 text-xs font-bold text-white">1</span>
-              <h2 class="text-lg font-semibold tracking-tight">Upload sample CSV</h2>
+            <div class="flex items-center gap-1.5">
+              <span class="text-[15px] font-bold tracking-tight">Pallaw</span>
+              <span class="rounded-full bg-ink-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-500">AI</span>
             </div>
+            <span class="text-[11px] text-ink-400">Question Platform</span>
+          </div>
+        </div>
 
-            <label
-              id="dropZone"
-              class="group flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-ink-300 bg-ink-100/40 px-6 py-10 text-center transition hover:border-violet-400 hover:bg-violet-50/40"
-            >
-              <input type="file" id="fileInput" accept=".csv,text/csv" class="hidden" />
-              <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-white text-ink-500 shadow-sm transition group-hover:text-violet-600">
-                <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7"><path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0L8 8m4-4l4 4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
-              </div>
-              <div>
-                <p id="fileLabel" class="text-sm font-medium text-ink-700">
-                  Drop your CSV here, or <span class="text-violet-600">browse</span>
-                </p>
-                <p class="mt-0.5 text-xs text-ink-400">First row = column headers</p>
-              </div>
-            </label>
+        <nav class="space-y-1 p-3 text-sm">
+          <a href="#dashboard" data-nav="dashboard" class="nav-link flex items-center gap-3 rounded-xl px-3 py-2.5 font-medium text-ink-600 transition hover:bg-ink-100">
+            <svg class="h-5 w-5 text-ink-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12l9-9 9 9M5 10v10a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V10"/></svg>
+            Dashboard
+          </a>
+          <a href="#generate" data-nav="generate" class="nav-link flex items-center gap-3 rounded-xl px-3 py-2.5 font-medium text-ink-600 transition hover:bg-ink-100">
+            <svg class="h-5 w-5 text-ink-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7"><path stroke-linecap="round" stroke-linejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
+            Question Builder
+          </a>
+          <a href="#solve" data-nav="solve" class="nav-link flex items-center gap-3 rounded-xl px-3 py-2.5 font-medium text-ink-600 transition hover:bg-ink-100">
+            <svg class="h-5 w-5 text-ink-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            Solution Builder
+          </a>
+          <a href="#settings" data-nav="settings" class="nav-link flex items-center gap-3 rounded-xl px-3 py-2.5 font-medium text-ink-600 transition hover:bg-ink-100">
+            <svg class="h-5 w-5 text-ink-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+            Settings
+          </a>
+        </nav>
 
-            <div id="previewWrap" class="mt-5 hidden">
-              <div class="mb-2 flex items-center justify-between">
-                <h3 class="text-xs font-semibold uppercase tracking-wide text-ink-400">Detected columns</h3>
-                <span id="rowCount" class="rounded-full bg-ink-100 px-2.5 py-1 text-xs font-medium text-ink-500"></span>
+        <div class="absolute inset-x-0 bottom-0 space-y-2 border-t border-ink-200 p-3 text-xs">
+          <div id="keyStatus" class="flex items-center gap-2 rounded-lg bg-ink-50 px-3 py-2 font-medium text-ink-500"><span class="h-1.5 w-1.5 rounded-full bg-ink-300"></span>checking…</div>
+          <div id="dbStatus" class="flex items-center gap-2 rounded-lg bg-ink-50 px-3 py-2 font-medium text-ink-500"><span class="h-1.5 w-1.5 rounded-full bg-ink-300"></span>checking…</div>
+        </div>
+      </aside>
+
+      <!-- backdrop for mobile -->
+      <div id="backdrop" class="fixed inset-0 z-30 hidden bg-black/30 lg:hidden"></div>
+
+      <!-- ============ MAIN ============ -->
+      <div class="flex min-w-0 flex-1 flex-col lg:pl-64">
+        <!-- topbar -->
+        <header class="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-ink-200 bg-white/80 px-5 backdrop-blur">
+          <div class="flex items-center gap-3">
+            <button id="menuBtn" class="rounded-lg p-2 text-ink-500 hover:bg-ink-100 lg:hidden">
+              <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </button>
+            <h1 id="pageTitle" class="text-lg font-bold tracking-tight">Dashboard</h1>
+          </div>
+          <a href="#generate" data-nav="generate" class="btn-shine hidden items-center gap-2 rounded-xl bg-ink-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink-800 sm:inline-flex">
+            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
+            New questions
+          </a>
+        </header>
+
+        <main class="mx-auto w-full max-w-6xl flex-1 p-5">
+          <!-- ===== DASHBOARD ===== -->
+          <section data-view="dashboard">
+            <p class="mb-5 text-sm text-ink-500">Overview of everything you've generated and solved.</p>
+            <div id="statCards" class="grid grid-cols-2 gap-4 lg:grid-cols-4"></div>
+
+            <div class="mt-7 rounded-2xl border border-ink-200 bg-white shadow-card">
+              <div class="flex flex-wrap items-center justify-between gap-3 border-b border-ink-200 px-5 py-4">
+                <h2 class="text-base font-semibold">Recent activity</h2>
+                <div class="flex items-center gap-2 text-xs">
+                  <button data-filter="" class="job-filter rounded-lg border border-ink-200 px-3 py-1.5 font-medium text-ink-600 hover:bg-ink-100">All</button>
+                  <button data-filter="generate" class="job-filter rounded-lg border border-ink-200 px-3 py-1.5 font-medium text-ink-600 hover:bg-ink-100">Generated</button>
+                  <button data-filter="solve" class="job-filter rounded-lg border border-ink-200 px-3 py-1.5 font-medium text-ink-600 hover:bg-ink-100">Solved</button>
+                  <button id="refreshJobs" class="rounded-lg p-1.5 text-ink-400 hover:bg-ink-100 hover:text-ink-700" title="Refresh">
+                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h5M20 20v-5h-5M5.5 9a7 7 0 0111.9-2.5L20 9M18.5 15a7 7 0 01-11.9 2.5L4 15"/></svg>
+                  </button>
+                </div>
               </div>
-              <div id="headerChips" class="mb-4 flex flex-wrap gap-1.5"></div>
-              <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">Preview <span class="font-normal normal-case text-ink-400">· first 5 rows</span></h3>
-              <div class="nice-scroll overflow-x-auto rounded-xl border border-black/5">
-                <table id="previewTable" class="w-full text-sm"></table>
-              </div>
+              <div id="jobsWrap" class="p-2"></div>
             </div>
           </section>
 
-          <!-- Settings card -->
-          <section class="rounded-2xl border border-black/5 bg-white p-6 shadow-card">
-            <div class="mb-4 flex items-center gap-2">
-              <span class="flex h-6 w-6 items-center justify-center rounded-lg bg-ink-900 text-xs font-bold text-white">2</span>
-              <h2 class="text-lg font-semibold tracking-tight">Topic &amp; settings</h2>
-            </div>
+          <!-- ===== GENERATE ===== -->
+          <section data-view="generate">
+            <p class="mb-5 text-sm text-ink-500">Upload a sample CSV, pick a topic, and generate fresh MCQs <span class="font-medium text-ink-700">with solutions already included</span> — in the exact same format.</p>
 
-            <div class="space-y-4">
-              <div>
-                <label for="topic" class="mb-1.5 block text-sm font-medium text-ink-700">Topic <span class="text-rose-500">*</span></label>
-                <input
-                  id="topic"
-                  type="text"
-                  placeholder="e.g. Quadratic Equations, Percentage, Trigonometry…"
-                  class="w-full rounded-xl border border-ink-300 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
-                />
-                <p class="mt-1 text-xs text-ink-400">Type any topic — no dropdown.</p>
-              </div>
-
-              <div class="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label for="count" class="mb-1.5 block text-sm font-medium text-ink-700">How many questions?</label>
-                  <input
-                    id="count"
-                    type="number"
-                    min="1"
-                    max="50"
-                    value="5"
-                    class="w-full rounded-xl border border-ink-300 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
-                  />
+            <div class="grid gap-5 lg:grid-cols-[1.5fr_1fr]">
+              <div class="space-y-5">
+                <div class="rounded-2xl border border-ink-200 bg-white p-5 shadow-card">
+                  <h3 class="mb-3 flex items-center gap-2 text-sm font-semibold"><span class="flex h-5 w-5 items-center justify-center rounded-md bg-ink-900 text-[11px] font-bold text-white">1</span> Upload sample CSV</h3>
+                  <label id="gDrop" class="group flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed border-ink-300 bg-ink-50 px-6 py-8 text-center transition hover:border-violet-400 hover:bg-violet-50/40">
+                    <input type="file" id="gFile" accept=".csv,text/csv" class="hidden" />
+                    <svg class="h-7 w-7 text-ink-400 group-hover:text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0L8 8m4-4l4 4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+                    <p id="gFileLabel" class="text-sm font-medium text-ink-700">Drop CSV or <span class="text-violet-600">browse</span></p>
+                    <p class="text-xs text-ink-400">First row = column headers</p>
+                  </label>
+                  <div id="gPreview" class="mt-4 hidden">
+                    <div class="mb-2 flex items-center justify-between"><span class="text-xs font-semibold uppercase tracking-wide text-ink-400">Columns</span><span id="gRowCount" class="rounded-full bg-ink-100 px-2.5 py-1 text-xs font-medium text-ink-500"></span></div>
+                    <div id="gChips" class="mb-3 flex flex-wrap gap-1.5"></div>
+                    <div class="nice-scroll overflow-x-auto rounded-xl border border-ink-200"><table id="gPreviewTable" class="w-full text-sm"></table></div>
+                  </div>
                 </div>
-                <div>
-                  <label for="model" class="mb-1.5 block text-sm font-medium text-ink-700">AI model</label>
-                  <select
-                    id="model"
-                    class="w-full rounded-xl border border-ink-300 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
-                  >
-                    <option value="llama-3.3-70b-versatile">Llama 3.3 70B (versatile)</option>
-                    <option value="llama-3.1-8b-instant">Llama 3.1 8B (instant)</option>
-                    <option value="openai/gpt-oss-120b">GPT-OSS 120B</option>
-                    <option value="openai/gpt-oss-20b">GPT-OSS 20B</option>
-                  </select>
+
+                <div id="gResultCard" class="hidden rounded-2xl border border-ink-200 bg-white p-5 shadow-card">
+                  <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h3 class="flex items-center gap-2 text-sm font-semibold"><span class="flex h-5 w-5 items-center justify-center rounded-md bg-emerald-600 text-[11px] font-bold text-white">✓</span> Generated <span id="gResultCount" class="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"></span></h3>
+                    <div class="flex gap-2">
+                      <button id="gExport" class="inline-flex items-center gap-1.5 rounded-lg bg-ink-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-ink-800"><svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/></svg>Export CSV</button>
+                      <button id="gClear" class="rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-semibold text-ink-600 hover:bg-ink-100">Clear</button>
+                    </div>
+                  </div>
+                  <div class="nice-scroll overflow-x-auto rounded-xl border border-ink-200"><table id="gResultTable" class="w-full text-sm"></table></div>
                 </div>
               </div>
 
-              <div>
-                <label for="extra" class="mb-1.5 block text-sm font-medium text-ink-700">Extra instructions <span class="text-ink-400">(optional)</span></label>
-                <input
-                  id="extra"
-                  type="text"
-                  placeholder="e.g. Class 10 level, MCQ format, include step-by-step solution…"
-                  class="w-full rounded-xl border border-ink-300 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
-                />
+              <div class="space-y-5">
+                <div class="rounded-2xl border border-ink-200 bg-white p-5 shadow-card lg:sticky lg:top-20">
+                  <h3 class="mb-3 flex items-center gap-2 text-sm font-semibold"><span class="flex h-5 w-5 items-center justify-center rounded-md bg-ink-900 text-[11px] font-bold text-white">2</span> Topic &amp; settings</h3>
+                  <div class="space-y-3">
+                    <div>
+                      <label class="mb-1 block text-sm font-medium text-ink-700">Topic <span class="text-rose-500">*</span></label>
+                      <input id="gTopic" type="text" placeholder="e.g. Percentage, Fractions, Algebra…" class="w-full rounded-xl border border-ink-300 px-3.5 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" />
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                      <div><label class="mb-1 block text-sm font-medium text-ink-700">Count</label><input id="gCount" type="number" min="1" max="50" value="5" class="w-full rounded-xl border border-ink-300 px-3.5 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" /></div>
+                      <div><label class="mb-1 block text-sm font-medium text-ink-700">Model</label><select id="gModel" class="w-full rounded-xl border border-ink-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100"><option value="llama-3.3-70b-versatile">Llama 3.3 70B</option><option value="llama-3.1-8b-instant">Llama 3.1 8B</option><option value="openai/gpt-oss-120b">GPT-OSS 120B</option><option value="openai/gpt-oss-20b">GPT-OSS 20B</option></select></div>
+                    </div>
+                    <div><label class="mb-1 block text-sm font-medium text-ink-700">Extra instructions <span class="text-ink-400">(optional)</span></label><input id="gExtra" type="text" placeholder="e.g. Class 10 level, harder distractors…" class="w-full rounded-xl border border-ink-300 px-3.5 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" /></div>
+                    <button id="gRun" disabled class="btn-shine flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-glow transition enabled:hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50">
+                      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
+                      Generate questions
+                    </button>
+                    <p id="gStatus" class="min-h-[18px] text-sm"></p>
+                  </div>
+                </div>
               </div>
-
-              <button
-                id="generateBtn"
-                disabled
-                class="btn-shine flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-glow transition enabled:hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
-                Generate questions
-              </button>
-              <p id="status" class="min-h-[18px] text-sm"></p>
             </div>
           </section>
 
-          <!-- Results card -->
-          <section id="resultsCard" class="hidden rounded-2xl border border-black/5 bg-white p-6 shadow-card">
-            <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div class="flex items-center gap-2">
-                <span class="flex h-6 w-6 items-center justify-center rounded-lg bg-ink-900 text-xs font-bold text-white">3</span>
-                <h2 class="text-lg font-semibold tracking-tight">Generated questions</h2>
-                <span id="resultCount" class="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700"></span>
-              </div>
-              <div class="flex items-center gap-2">
-                <button id="exportBtn" class="inline-flex items-center gap-1.5 rounded-lg bg-ink-900 px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-ink-800">
-                  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/></svg>
-                  Export CSV
-                </button>
-                <button id="clearBtn" class="rounded-lg border border-ink-300 px-3.5 py-2 text-xs font-semibold text-ink-700 transition hover:bg-ink-100">Clear</button>
-              </div>
-            </div>
-            <div class="nice-scroll overflow-x-auto rounded-xl border border-black/5">
-              <table id="resultsTable" class="w-full text-sm"></table>
-            </div>
-          </section>
-        </div>
+          <!-- ===== SOLVE ===== -->
+          <section data-view="solve">
+            <p class="mb-5 text-sm text-ink-500">Upload a CSV of questions and the AI will <span class="font-medium text-ink-700">fill the explanation/solution</span> (and answer, if you want) — cleanly, in the same format.</p>
 
-        <!-- RIGHT: history -->
-        <aside class="space-y-6">
-          <section class="rounded-2xl border border-black/5 bg-white p-6 shadow-card lg:sticky lg:top-20">
-            <div class="mb-4 flex items-center justify-between">
-              <h2 class="text-base font-semibold tracking-tight">History</h2>
-              <button id="refreshHistory" class="rounded-lg p-1.5 text-ink-400 transition hover:bg-ink-100 hover:text-ink-700" title="Refresh">
-                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h5M20 20v-5h-5M5.5 9a7 7 0 0111.9-2.5L20 9M18.5 15a7 7 0 01-11.9 2.5L4 15"/></svg>
-              </button>
+            <div class="grid gap-5 lg:grid-cols-[1.5fr_1fr]">
+              <div class="space-y-5">
+                <div class="rounded-2xl border border-ink-200 bg-white p-5 shadow-card">
+                  <h3 class="mb-3 flex items-center gap-2 text-sm font-semibold"><span class="flex h-5 w-5 items-center justify-center rounded-md bg-ink-900 text-[11px] font-bold text-white">1</span> Upload questions CSV</h3>
+                  <label id="sDrop" class="group flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed border-ink-300 bg-ink-50 px-6 py-8 text-center transition hover:border-sky-400 hover:bg-sky-50/40">
+                    <input type="file" id="sFile" accept=".csv,text/csv" class="hidden" />
+                    <svg class="h-7 w-7 text-ink-400 group-hover:text-sky-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0L8 8m4-4l4 4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+                    <p id="sFileLabel" class="text-sm font-medium text-ink-700">Drop CSV or <span class="text-sky-600">browse</span></p>
+                    <p class="text-xs text-ink-400">Questions with empty explanation/answer columns</p>
+                  </label>
+                  <div id="sPreview" class="mt-4 hidden">
+                    <div class="mb-2 flex items-center justify-between"><span class="text-xs font-semibold uppercase tracking-wide text-ink-400">Columns</span><span id="sRowCount" class="rounded-full bg-ink-100 px-2.5 py-1 text-xs font-medium text-ink-500"></span></div>
+                    <div id="sChips" class="mb-3 flex flex-wrap gap-1.5"></div>
+                    <div class="nice-scroll overflow-x-auto rounded-xl border border-ink-200"><table id="sPreviewTable" class="w-full text-sm"></table></div>
+                  </div>
+                </div>
+
+                <div id="sResultCard" class="hidden rounded-2xl border border-ink-200 bg-white p-5 shadow-card">
+                  <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h3 class="flex items-center gap-2 text-sm font-semibold"><span class="flex h-5 w-5 items-center justify-center rounded-md bg-emerald-600 text-[11px] font-bold text-white">✓</span> Solved <span id="sResultCount" class="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"></span></h3>
+                    <div class="flex gap-2">
+                      <button id="sExport" class="inline-flex items-center gap-1.5 rounded-lg bg-ink-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-ink-800"><svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/></svg>Export CSV</button>
+                      <button id="sClear" class="rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-semibold text-ink-600 hover:bg-ink-100">Clear</button>
+                    </div>
+                  </div>
+                  <div class="nice-scroll overflow-x-auto rounded-xl border border-ink-200"><table id="sResultTable" class="w-full text-sm"></table></div>
+                </div>
+              </div>
+
+              <div class="space-y-5">
+                <div class="rounded-2xl border border-ink-200 bg-white p-5 shadow-card lg:sticky lg:top-20">
+                  <h3 class="mb-3 flex items-center gap-2 text-sm font-semibold"><span class="flex h-5 w-5 items-center justify-center rounded-md bg-ink-900 text-[11px] font-bold text-white">2</span> What to fill &amp; settings</h3>
+                  <div class="space-y-3">
+                    <div>
+                      <label class="mb-1.5 block text-sm font-medium text-ink-700">Columns to fill <span class="text-rose-500">*</span></label>
+                      <div id="sTargets" class="space-y-1.5 rounded-xl border border-ink-200 bg-ink-50 p-2.5 text-sm text-ink-400">Upload a CSV to choose columns.</div>
+                    </div>
+                    <div><label class="mb-1 block text-sm font-medium text-ink-700">Model</label><select id="sModel" class="w-full rounded-xl border border-ink-300 px-3 py-2.5 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"><option value="llama-3.3-70b-versatile">Llama 3.3 70B</option><option value="llama-3.1-8b-instant">Llama 3.1 8B</option><option value="openai/gpt-oss-120b">GPT-OSS 120B</option><option value="openai/gpt-oss-20b">GPT-OSS 20B</option></select></div>
+                    <div><label class="mb-1 block text-sm font-medium text-ink-700">Extra instructions <span class="text-ink-400">(optional)</span></label><input id="sExtra" type="text" placeholder="e.g. keep solutions under 2 lines…" class="w-full rounded-xl border border-ink-300 px-3.5 py-2.5 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100" /></div>
+                    <button id="sRun" disabled class="btn-shine flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-cyan-600 px-4 py-3 text-sm font-semibold text-white shadow-glow transition enabled:hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50">
+                      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                      Add solutions
+                    </button>
+                    <p id="sStatus" class="min-h-[18px] text-sm"></p>
+                  </div>
+                </div>
+              </div>
             </div>
-            <p id="historyEmpty" class="text-sm text-ink-400">No saved sets yet. Generated batches will appear here when a database is connected.</p>
-            <ul id="historyList" class="space-y-2"></ul>
           </section>
-        </aside>
+
+          <!-- ===== SETTINGS ===== -->
+          <section data-view="settings">
+            <p class="mb-5 text-sm text-ink-500">Configure your Groq API key and MySQL database. Secrets are stored server-side only.</p>
+            <div class="grid gap-5 lg:grid-cols-2">
+              <div class="rounded-2xl border border-ink-200 bg-white p-5 shadow-card">
+                <h3 class="mb-4 flex items-center gap-2 text-sm font-semibold"><svg class="h-5 w-5 text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg> Groq API</h3>
+                <div class="space-y-3">
+                  <div><label class="mb-1 block text-sm font-medium text-ink-700">API key</label><input id="setKey" type="password" placeholder="gsk_..." class="w-full rounded-xl border border-ink-300 px-3.5 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" /><p class="mt-1 text-xs text-ink-400">Get one at console.groq.com/keys</p></div>
+                  <div><label class="mb-1 block text-sm font-medium text-ink-700">Default model</label><select id="setModel" class="w-full rounded-xl border border-ink-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100"><option value="llama-3.3-70b-versatile">Llama 3.3 70B</option><option value="llama-3.1-8b-instant">Llama 3.1 8B</option><option value="openai/gpt-oss-120b">GPT-OSS 120B</option><option value="openai/gpt-oss-20b">GPT-OSS 20B</option></select></div>
+                </div>
+              </div>
+
+              <div class="rounded-2xl border border-ink-200 bg-white p-5 shadow-card">
+                <h3 class="mb-4 flex items-center gap-2 text-sm font-semibold"><svg class="h-5 w-5 text-sky-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7"><path stroke-linecap="round" stroke-linejoin="round" d="M4 7c0 1.657 3.582 3 8 3s8-1.343 8-3-3.582-3-8-3-8 1.343-8 3z"/><path stroke-linecap="round" stroke-linejoin="round" d="M4 7v5c0 1.657 3.582 3 8 3s8-1.343 8-3V7M4 12v5c0 1.657 3.582 3 8 3s8-1.343 8-3v-5"/></svg> MySQL Database</h3>
+                <div class="grid grid-cols-2 gap-3">
+                  <div class="col-span-2"><label class="mb-1 block text-sm font-medium text-ink-700">Host</label><input id="setDbHost" type="text" class="w-full rounded-xl border border-ink-300 px-3.5 py-2.5 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100" /></div>
+                  <div><label class="mb-1 block text-sm font-medium text-ink-700">Port</label><input id="setDbPort" type="text" class="w-full rounded-xl border border-ink-300 px-3.5 py-2.5 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100" /></div>
+                  <div><label class="mb-1 block text-sm font-medium text-ink-700">Database</label><input id="setDbName" type="text" class="w-full rounded-xl border border-ink-300 px-3.5 py-2.5 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100" /></div>
+                  <div><label class="mb-1 block text-sm font-medium text-ink-700">User</label><input id="setDbUser" type="text" class="w-full rounded-xl border border-ink-300 px-3.5 py-2.5 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100" /></div>
+                  <div><label class="mb-1 block text-sm font-medium text-ink-700">Password</label><input id="setDbPass" type="password" class="w-full rounded-xl border border-ink-300 px-3.5 py-2.5 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100" /></div>
+                </div>
+              </div>
+            </div>
+            <div class="mt-5 flex items-center gap-3">
+              <button id="setSave" class="btn-shine inline-flex items-center gap-2 rounded-xl bg-ink-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-ink-800">Save settings</button>
+              <p id="setStatus" class="text-sm"></p>
+            </div>
+          </section>
+        </main>
+
+        <footer class="border-t border-ink-200 py-6 text-center text-xs text-ink-400">Pallaw · HTML · Tailwind · PHP · MySQL · Groq</footer>
       </div>
-    </main>
+    </div>
 
-    <footer class="border-t border-black/5 py-10 text-center text-xs text-ink-400">
-      <p>Pallaw — AI Question Generator · HTML · Tailwind · PHP · MySQL · Groq</p>
-    </footer>
+    <!-- toast -->
+    <div id="toast" class="pointer-events-none fixed bottom-5 left-1/2 z-50 -translate-x-1/2 opacity-0 transition-opacity"></div>
 
     <script src="assets/app.js"></script>
   </body>

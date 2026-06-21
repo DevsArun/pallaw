@@ -1,4 +1,5 @@
-# Local env / secrets
+# Local secrets / settings written by the Settings page
+api/settings.local.php
 .env
 *.local
 

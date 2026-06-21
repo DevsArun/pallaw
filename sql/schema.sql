@@ -1,10 +1,10 @@
 -- ============================================================
---  Pallaw — AI Question Generator
+--  Pallaw — AI Question Platform
 --  MySQL schema
 -- ============================================================
---  Flexible design: CSV columns are dynamic, so we store the
---  detected column list per "set" and each generated question
---  row as JSON. This supports ANY CSV structure the user uploads.
+--  Tables are also auto-created by the app (api/db.php) the first
+--  time a working DB connection is made, so running this file is
+--  optional. It is provided for manual / production setup.
 -- ============================================================
 
 CREATE DATABASE IF NOT EXISTS pallaw
@@ -13,29 +13,30 @@ CREATE DATABASE IF NOT EXISTS pallaw
 
 USE pallaw;
 
--- A "question set" = one generation batch for a given topic,
--- tied to the column structure of the uploaded sample CSV.
-CREATE TABLE IF NOT EXISTS question_sets (
+-- A "job" = one batch produced by the platform.
+--   type = 'generate'  -> new questions built from a sample CSV
+--   type = 'solve'      -> explanations/answers added to uploaded questions
+-- columns_json stores the exact CSV column order so exports match the input.
+CREATE TABLE IF NOT EXISTS jobs (
   id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  topic         VARCHAR(255)      NOT NULL,
-  columns_json  JSON              NOT NULL,         -- ["id","question","answer", ...]
+  type          ENUM('generate','solve') NOT NULL,
+  topic         VARCHAR(255)      DEFAULT NULL,
+  source_file   VARCHAR(255)      DEFAULT NULL,
+  columns_json  JSON              NOT NULL,
   model         VARCHAR(120)      DEFAULT NULL,
-  source_file   VARCHAR(255)      DEFAULT NULL,     -- original CSV file name
-  question_count INT UNSIGNED     NOT NULL DEFAULT 0,
+  row_count     INT UNSIGNED      NOT NULL DEFAULT 0,
   created_at    TIMESTAMP         NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_topic (topic),
+  INDEX idx_type (type),
   INDEX idx_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Individual generated question rows. data_json holds the full
--- row keyed by the CSV columns, so any structure is preserved.
-CREATE TABLE IF NOT EXISTS questions (
+-- Each generated/solved question row, stored as JSON keyed by the columns.
+CREATE TABLE IF NOT EXISTS job_rows (
   id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  set_id      BIGINT UNSIGNED   NOT NULL,
-  data_json   JSON              NOT NULL,           -- {"id":"1","question":"...","answer":"..."}
+  job_id      BIGINT UNSIGNED   NOT NULL,
+  data_json   JSON              NOT NULL,
   created_at  TIMESTAMP         NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_questions_set
-    FOREIGN KEY (set_id) REFERENCES question_sets(id)
-    ON DELETE CASCADE,
-  INDEX idx_set (set_id)
+  CONSTRAINT fk_job_rows_job
+    FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+  INDEX idx_job (job_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
