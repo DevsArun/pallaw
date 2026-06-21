@@ -22,13 +22,13 @@ function get_db(): ?PDO
 
     $dsn = sprintf(
         'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
-        setting('db_host'),
-        setting('db_port'),
-        setting('db_name')
+        DB_HOST,
+        DB_PORT,
+        DB_NAME
     );
 
     try {
-        $pdo = new PDO($dsn, setting('db_user'), setting('db_pass'), [
+        $pdo = new PDO($dsn, DB_USER, DB_PASS, [
             PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES   => false,

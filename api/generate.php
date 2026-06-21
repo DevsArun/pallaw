@@ -7,9 +7,11 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/groq.php';
+
+require_auth();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     json_response(405, ['error' => 'Method not allowed. Use POST.']);
@@ -27,8 +29,9 @@ $source  = trim((string) ($in['source'] ?? ''));
 if (empty($columns)) {
     json_response(400, ['error' => 'No CSV columns provided. Upload a sample CSV first.']);
 }
-if ($topic === '') {
-    json_response(400, ['error' => 'Please enter a topic.']);
+// Topic is OPTIONAL — when empty the AI infers it from the samples.
+if ($topic === '' && empty($samples)) {
+    json_response(400, ['error' => 'Add a topic, or upload samples so the AI can infer one.']);
 }
 
 try {

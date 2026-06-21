@@ -116,6 +116,14 @@ function groq_generate(array $columns, array $samples, string $topic, int $count
     $keysShape  = implode(', ', array_map(fn ($c) => '"' . $c . '": "..."', $columns));
     $extraLine  = $extra !== '' ? "- Extra instructions from the user: {$extra}\n" : '';
 
+    // Topic is optional. If blank, the AI infers it from the samples.
+    if ($topic !== '') {
+        $topicLine = "- Generate exactly {$count} brand-new ORIGINAL math questions about: \"{$topic}\".";
+    } else {
+        $topicLine = "- First ANALYZE the sample questions to infer their topic(s) and sub-topics, "
+            . "then generate exactly {$count} brand-new ORIGINAL math questions on the SAME topic(s) and theme.";
+    }
+
     $system = 'You are an expert math teacher who writes exam-ready multiple-choice questions. '
         . 'You ALWAYS include a clear, correct, step-by-step explanation for every question. '
         . 'You return strictly valid JSON only.';
@@ -129,7 +137,7 @@ Samples:
 {$sampleText}
 
 TASK:
-- Generate exactly {$count} brand-new ORIGINAL math questions about: "{$topic}".
+{$topicLine}
 - Match the samples' format and difficulty distribution.
 - Every item MUST contain every column key listed above.
 - If there are option columns (e.g. option_a..option_d), fill all of them with plausible choices.
