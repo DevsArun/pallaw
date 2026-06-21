@@ -1,0 +1,12 @@
+# Local env / secrets
+.env
+*.local
+
+# Dependencies
+/vendor/
+/node_modules/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
