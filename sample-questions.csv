@@ -1,4 +1,0 @@
-id,topic,question,option_a,option_b,option_c,option_d,answer,solution
-1,Percentage,What is 25% of 240?,40,50,60,70,60,25% of 240 = 240 * 25/100 = 60
-2,Percentage,A shirt costs 800 and is sold at a 15% discount. What is the selling price?,640,680,700,720,680,Discount = 800 * 15/100 = 120; Selling price = 800 - 120 = 680
-3,Percentage,"If a number is increased by 20% to become 360, what was the original number?",280,300,320,340,300,Original * 1.2 = 360; Original = 360 / 1.2 = 300
