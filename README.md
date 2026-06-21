@@ -11,23 +11,27 @@ Premium dark + cyan UI.
 ## Features
 
 - 🔒 **Login lock** — the whole panel is behind a username/password (configured in `api/config.php`).
-- 🧮 **Question Builder** — upload a sample CSV, generate fresh MCQs **with solutions already filled in**, same columns. **Topic is optional** — leave it empty and the AI infers it from your samples.
+- 🧮 **Question Builder** — upload a sample file, generate fresh MCQs **with solutions already filled in**, same columns. **Topic is optional** — leave it empty and the AI infers it from your samples.
 - ✅ **Solution Builder** — upload questions and let the AI fill the **explanation/answer** columns cleanly, without touching the questions.
+- 📥 **Flexible input** — accepts **CSV, XLSX, XLS, XLSB, ODS and TSV** (Excel + delimited tables). **Output is always CSV.**
 - 📊 **Dashboard** — stats (total / generated / solved / batches) and recent activity with a **re-download CSV** button for every batch.
 - ⚙️ **Settings** — only the **Groq API key + model** (DB & login stay in config for security).
 - 💾 **MySQL history** — every batch is saved; tables auto-create on first connect.
 
 ---
 
-## Expected CSV format
+## Input & output formats
 
-The included `sample_questions.csv` matches the MCQ format the app targets:
+Upload **CSV, XLSX, XLS, XLSB, ODS or TSV** — the first row is treated as column headers
+and the structure is auto-detected. Excel files are parsed in the browser (via SheetJS) and
+delimited text files auto-detect their separator (comma / tab / semicolon / pipe).
+
+**Exports are always CSV**, using the same columns as your uploaded file. The included
+`sample_questions.csv` matches the MCQ format the app targets:
 
 ```
 question_text,option_a,option_b,option_c,option_d,correct_option,explanation,difficulty
 ```
-
-Any CSV works though — whatever columns you upload are detected and preserved on export.
 
 ---
 

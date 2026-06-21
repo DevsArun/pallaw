@@ -36,8 +36,8 @@ function setStatus(id, msg, type = '') {
   el.innerHTML = type === 'load' ? `<span class="spinner spinner-dark"></span><span>${esc(msg)}</span>` : esc(msg);
 }
 
-/* ---------- CSV utils ---------- */
-function parseCSV(text) {
+/* ---------- CSV / table utils ---------- */
+function parseDelimited(text, delim) {
   const rows = []; let row = []; let field = ''; let q = false;
   text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   for (let i = 0; i < text.length; i++) {
@@ -47,13 +47,53 @@ function parseCSV(text) {
       else field += c;
     } else {
       if (c === '"') q = true;
-      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === delim) { row.push(field); field = ''; }
       else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
       else field += c;
     }
   }
   if (field.length || row.length) { row.push(field); rows.push(row); }
   return rows.filter((r) => r.some((v) => String(v).trim() !== ''));
+}
+// Guess the delimiter (comma / tab / semicolon / pipe) from the first real line.
+function detectDelim(text) {
+  const line = (text.split(/\r?\n/).find((l) => l.trim() !== '') || '');
+  const cands = [',', '\t', ';', '|'];
+  let best = ',', bestN = -1;
+  for (const d of cands) {
+    const n = line.split(d).length - 1;
+    if (n > bestN) { bestN = n; best = d; }
+  }
+  return best;
+}
+/**
+ * Universal reader: accepts CSV / TSV / TXT and Excel (XLSX/XLS/XLSB/ODS).
+ * Always returns rows as an array of string arrays. Output elsewhere stays CSV.
+ */
+function readTableFile(file, cb) {
+  const name = (file.name || '').toLowerCase();
+  const isExcel = /\.(xlsx|xls|xlsb|ods)$/.test(name);
+  const reader = new FileReader();
+  reader.onerror = () => cb(null, 'Could not read the file.');
+  reader.onload = (e) => {
+    try {
+      let rows;
+      if (isExcel) {
+        if (typeof XLSX === 'undefined') { cb(null, 'Excel parser failed to load (check your internet connection).'); return; }
+        const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        if (!ws) { cb(null, 'No sheet found in that workbook.'); return; }
+        rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false, blankrows: false })
+          .map((r) => r.map((c) => String(c ?? '')));
+      } else {
+        const text = e.target.result;
+        rows = parseDelimited(text, detectDelim(text));
+      }
+      rows = rows.filter((r) => r.some((v) => String(v).trim() !== ''));
+      cb(rows, null);
+    } catch (err) { cb(null, 'Could not parse the file: ' + err.message); }
+  };
+  if (isExcel) reader.readAsArrayBuffer(file); else reader.readAsText(file);
 }
 function rowsToObjects(rows) {
   if (!rows.length) return { hdrs: [], objs: [] };
@@ -182,10 +222,10 @@ const gen = { headers: [], samples: [], source: '', results: [] };
 function gHandleFile(file) {
   if (!file) return;
   gen.source = file.name;
-  const r = new FileReader();
-  r.onload = (e) => {
-    const { hdrs, objs } = rowsToObjects(parseCSV(e.target.result));
-    if (!hdrs.length) return setStatus('gStatus', 'That CSV looks empty.', 'err');
+  readTableFile(file, (rows, err) => {
+    if (err) return setStatus('gStatus', err, 'err');
+    const { hdrs, objs } = rowsToObjects(rows || []);
+    if (!hdrs.length) return setStatus('gStatus', 'That file looks empty.', 'err');
     gen.headers = hdrs; gen.samples = objs;
     $('gFileLabel').innerHTML = `<span class="font-semibold text-slate-100">${esc(file.name)}</span> · ${objs.length} rows`;
     $('gRowCount').textContent = `${objs.length} samples`;
@@ -193,8 +233,7 @@ function gHandleFile(file) {
     renderTable($('gPreviewTable'), hdrs, objs, 5);
     $('gPreview').classList.remove('hidden');
     gRefresh();
-  };
-  r.readAsText(file);
+  });
 }
 // Topic optional: enabled as soon as a CSV is loaded.
 function gRefresh() { $('gRun').disabled = !gen.headers.length; }
@@ -231,10 +270,10 @@ const TARGET_HINTS = ['explanation', 'solution', 'answer', 'correct_option', 'co
 function sHandleFile(file) {
   if (!file) return;
   sol.source = file.name;
-  const r = new FileReader();
-  r.onload = (e) => {
-    const { hdrs, objs } = rowsToObjects(parseCSV(e.target.result));
-    if (!hdrs.length) return setStatus('sStatus', 'That CSV looks empty.', 'err');
+  readTableFile(file, (rows, err) => {
+    if (err) return setStatus('sStatus', err, 'err');
+    const { hdrs, objs } = rowsToObjects(rows || []);
+    if (!hdrs.length) return setStatus('sStatus', 'That file looks empty.', 'err');
     sol.headers = hdrs; sol.rows = objs;
     $('sFileLabel').innerHTML = `<span class="font-semibold text-slate-100">${esc(file.name)}</span> · ${objs.length} rows`;
     $('sRowCount').textContent = `${objs.length} questions`;
@@ -248,8 +287,7 @@ function sHandleFile(file) {
     }).join('');
     $('sTargets').querySelectorAll('.s-target').forEach((c) => c.addEventListener('change', sRefresh));
     sRefresh();
-  };
-  r.readAsText(file);
+  });
 }
 function sSelectedTargets() { return [...document.querySelectorAll('.s-target:checked')].map((c) => c.value); }
 function sRefresh() { $('sRun').disabled = !(sol.headers.length && sSelectedTargets().length); }
