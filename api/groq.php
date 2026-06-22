@@ -111,7 +111,7 @@ function groq_rate_limit_message(?array $body): string
  *
  * @param int $maxTokens  completion-token budget (keeps us under TPM limits)
  */
-function groq_chat(string $systemPrompt, string $userPrompt, string $model, int $maxTokens = 3000): array
+function groq_chat(string $systemPrompt, string $userPrompt, string $model, int $maxTokens = 3000, float $temperature = 0.4): array
 {
     $key = (string) setting('groq_api_key');
     if ($key === '') {
@@ -127,7 +127,7 @@ function groq_chat(string $systemPrompt, string $userPrompt, string $model, int 
 
     $strictBody = [
         'model'           => $model,
-        'temperature'     => 0.4,
+        'temperature'     => $temperature,
         'max_tokens'      => $maxTokens,
         'response_format' => ['type' => 'json_object'],
         'messages'        => $messages,
@@ -153,9 +153,9 @@ function groq_chat(string $systemPrompt, string $userPrompt, string $model, int 
                     return $parsed;
                 }
             }
-            throw new RuntimeException(groq_rate_limit_message($rb ?? $body));
+            throw new RuntimeException(groq_rate_limit_message($rb ?? $body), 429);
         }
-        throw new RuntimeException(groq_rate_limit_message($body));
+        throw new RuntimeException(groq_rate_limit_message($body), 429);
     } elseif ($body !== null) {
         // Groq sometimes returns a usable partial in failed_generation.
         $failed = $body['error']['failed_generation'] ?? '';
@@ -188,7 +188,7 @@ function groq_chat(string $systemPrompt, string $userPrompt, string $model, int 
             return $parsed;
         }
     } elseif (groq_is_rate_limited($code2, $body2)) {
-        throw new RuntimeException(groq_rate_limit_message($body2));
+        throw new RuntimeException(groq_rate_limit_message($body2), 429);
     }
 
     // Build a helpful error.
@@ -230,69 +230,74 @@ function normalize_rows(array $rows, array $columns): array
 }
 
 /* ============================================================
-   PART 1 — Generate new questions
+   PART 1 — Generate new questions (output = canonical schema)
    ============================================================ */
 
 /**
- * @param string[]              $columns
- * @param array<int,array>      $samples
+ * Generate NEW, distinct questions in the canonical output schema, learning
+ * the style/topic/difficulty from the uploaded samples (any column layout).
+ *
+ * @param string[]              $columns   canonical OUTPUT columns
+ * @param array<int,array>      $samples   raw uploaded sample rows (any keys)
+ * @param string[]              $avoid     question texts already produced (skip dupes)
  * @return array<int,array<string,string>>
  */
-function groq_generate(array $columns, array $samples, string $topic, int $count, string $extra, string $model): array
+function groq_generate(array $columns, array $samples, string $topic, int $count, string $extra, string $model, array $avoid = []): array
 {
     $columnList = implode(', ', $columns);
-
-    $sampleLines = [];
-    foreach ($samples as $i => $row) {
-        $obj = [];
-        foreach ($columns as $c) {
-            $obj[$c] = $row[$c] ?? '';
-        }
-        $sampleLines[] = 'Sample ' . ($i + 1) . ': ' . json_encode($obj, JSON_UNESCAPED_UNICODE);
-    }
-    $sampleText = implode("\n", $sampleLines);
     $keysShape  = implode(', ', array_map(fn ($c) => '"' . $c . '": "..."', $columns));
-    $extraLine  = $extra !== '' ? "- Extra instructions from the user: {$extra}\n" : '';
 
-    // Topic is optional. If blank, the AI infers it from the samples.
+    // Show the samples exactly as uploaded so the model learns the real style.
+    $sampleLines = [];
+    foreach (array_slice($samples, 0, 6) as $i => $row) {
+        $sampleLines[] = 'Sample ' . ($i + 1) . ': ' . json_encode($row, JSON_UNESCAPED_UNICODE);
+    }
+    $sampleText = $sampleLines ? implode("\n", $sampleLines) : '(none provided)';
+
+    $extraLine = $extra !== '' ? "- Extra instructions from the user: {$extra}\n" : '';
+
     if ($topic !== '') {
-        $topicLine = "- Generate exactly {$count} brand-new ORIGINAL math questions about: \"{$topic}\".";
+        $topicLine = "- Generate exactly {$count} brand-new ORIGINAL questions about: \"{$topic}\".";
     } else {
-        $topicLine = "- Look at the sample questions, work out what topic they belong to, "
-            . "then generate exactly {$count} brand-new ORIGINAL math questions on that SAME topic and theme.";
+        $topicLine = "- Study the samples, work out their exact topic/sub-topic and difficulty, "
+            . "then generate exactly {$count} brand-new ORIGINAL questions on the SAME topic and style.";
     }
 
-    $system = 'You are an expert math teacher who writes exam-ready multiple-choice questions. '
-        . 'You ALWAYS include a clear, correct, step-by-step explanation for every question. '
-        . 'You output ONLY a single JSON object shaped like {"questions": [ ... ]} where each item uses '
-        . 'the exact CSV column keys you are given. Never output any analysis, summary, statistics, or extra keys.';
+    // Anti-duplicate context.
+    $avoidLine = '';
+    if (!empty($avoid)) {
+        $recent = array_slice(array_values($avoid), -60);
+        $avoidLine = "- These questions were ALREADY created — do NOT repeat, reuse, or merely change the numbers of any of them:\n"
+            . json_encode($recent, JSON_UNESCAPED_UNICODE) . "\n";
+    }
+
+    $system = 'You are a senior exam-paper author. You write fresh, varied, exam-ready multiple-choice '
+        . 'questions and a correct step-by-step solution for each. Every question must be genuinely '
+        . 'different — vary the numbers, scenarios, sub-topics and phrasing. You output ONLY a single JSON '
+        . 'object {"questions":[...]} whose items use EXACTLY the given output keys. No analysis, no extra keys.';
 
     $user = <<<PROMPT
-You are given sample questions from a spreadsheet. Study their columns, style, difficulty and how each field is filled.
-
-CSV columns (use EXACTLY these keys, same spelling and case): {$columnList}
-
-Samples:
+Here are sample questions (study their topic, difficulty and style — your output may use different column names than these):
 {$sampleText}
 
+OUTPUT COLUMNS — each generated question MUST be an object with EXACTLY these keys (same spelling/case):
+{$columnList}
+
 TASK:
-- First STUDY and ANALYZE the sample questions — notice their topic, pattern, structure, option style and difficulty.
 {$topicLine}
-- Match the samples' format and difficulty distribution.
-- Every item MUST contain every column key listed above, filled in.
-- If there are option columns (e.g. OptionA..OptionD), fill all of them with plausible choices.
-- If there is a correct-answer column, put the RIGHT answer (matching the option label format used in the samples, e.g. "B").
-- ALWAYS write a full step-by-step SOLUTION in the explanation column (any column whose name contains explanation/solution). Do the math carefully and double-check it. Never leave it blank.
-- If there is a difficulty column, use the same vocabulary as the samples (e.g. easy/medium/hard).
-- Do NOT copy the samples; make new questions.
-{$extraLine}
-Output ONLY this JSON object (no markdown, no analysis, no commentary):
+- Make every question DISTINCT and realistic. Do not output the same template repeatedly.
+- Fill option columns (option_a..option_d) with four plausible, distinct choices.
+- Set correct_option to the right choice's LETTER (A, B, C or D) and make sure it is actually correct.
+- ALWAYS write a clear, correct, step-by-step SOLUTION in the "explanation" key. Never leave it blank.
+- Set "difficulty" to one of: easy, medium, hard.
+{$avoidLine}{$extraLine}
+Output ONLY this JSON object (no markdown, no commentary):
 { "questions": [ { {$keysShape} } ] }
 PROMPT;
 
-    // Budget ~300 completion tokens per question (keeps us under TPM limits).
-    $maxTokens = (int) min(8000, max(1200, $count * 300 + 600));
-    $parsed    = groq_chat($system, $user, $model, $maxTokens);
+    // ~320 completion tokens per question; higher temperature for variety.
+    $maxTokens = (int) min(8000, max(1200, $count * 320 + 600));
+    $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.85);
     $questions = $parsed['questions'] ?? ($parsed['data'] ?? []);
     if (!is_array($questions)) {
         $questions = [];
@@ -301,67 +306,62 @@ PROMPT;
 }
 
 /* ============================================================
-   PART 2 — Add explanation / solution to existing questions
+   PART 2 — Add solutions & reformat to the canonical schema
    ============================================================ */
 
 /**
- * Fill one or more "target" columns (e.g. explanation, correct_option) for
- * each existing row, keeping every other column exactly as provided.
+ * Take uploaded question rows (any column layout) and return them in the
+ * canonical schema with a correct step-by-step solution filled in. The
+ * question text, options and correct answer are preserved as given.
  *
- * @param string[]              $columns      all CSV columns (preserved)
- * @param array<int,array>      $rows         existing question rows
- * @param string[]              $targets      columns the AI should (re)fill
+ * @param string[]         $columns  canonical OUTPUT columns
+ * @param array<int,array> $rows     raw uploaded rows (any keys)
  * @return array<int,array<string,string>>
  */
-function groq_solve(array $columns, array $rows, array $targets, string $extra, string $model): array
+function groq_solve(array $columns, array $rows, string $extra, string $model): array
 {
     $columnList = implode(', ', $columns);
-    $targetList = implode(', ', $targets);
+    $keysShape  = implode(', ', array_map(fn ($c) => '"' . $c . '": "..."', $columns));
 
-    // Send rows indexed so we can map answers back reliably.
     $indexed = [];
     foreach (array_values($rows) as $i => $row) {
-        $obj = ['_index' => $i];
-        foreach ($columns as $c) {
-            $obj[$c] = $row[$c] ?? '';
-        }
-        $indexed[] = $obj;
+        $indexed[] = array_merge(['_index' => $i], is_array($row) ? $row : []);
     }
-    $rowsJson    = json_encode($indexed, JSON_UNESCAPED_UNICODE);
-    $extraLine   = $extra !== '' ? "- Extra instructions from the user: {$extra}\n" : '';
-    $targetShape = implode(', ', array_map(fn ($t) => '"' . $t . '": "..."', $targets));
+    $rowsJson  = json_encode($indexed, JSON_UNESCAPED_UNICODE);
+    $extraLine = $extra !== '' ? "- Extra instructions from the user: {$extra}\n" : '';
 
-    $system = 'You are a meticulous math teacher. For each question you produce a correct, '
-        . 'clear, step-by-step solution. You never change the original question or options. '
-        . 'You return strictly valid JSON only.';
+    $system = 'You are a meticulous exam solutions author. You keep each question and its options '
+        . 'EXACTLY as given, work out the correct answer, and write a clear step-by-step solution. '
+        . 'You output ONLY a single JSON object {"rows":[...]} using EXACTLY the given output keys plus "_index".';
 
     $user = <<<PROMPT
-You are given existing CSV question rows. Each row has an "_index" plus these columns: {$columnList}
+You are given existing question rows (their column names may vary). Each row has an "_index".
 
 Rows:
 {$rowsJson}
 
+OUTPUT COLUMNS — convert EVERY row into an object with EXACTLY these keys (plus "_index"):
+{$columnList}
+
 TASK:
-- For EVERY row, fill in ONLY these column(s): {$targetList}.
-- Keep "_index" unchanged so answers can be matched.
-- Do NOT modify any other column — leave the question text, options and difficulty exactly as given.
-- Solve the math correctly. If a target column is the correct-answer/option, set the RIGHT value in the same label format used by the row's options (e.g. "C").
-- If a target column is an explanation/solution, write a concise, correct step-by-step working.
-- Be clean and consistent. No placeholders, no "N/A", no errors.
+- Keep the question text and all options EXACTLY as in the source (just map them into question_text and option_a..option_d).
+- Determine the correct answer and set correct_option to its LETTER (A, B, C or D).
+- ALWAYS write a clear, correct, step-by-step SOLUTION in the "explanation" key. Never leave it blank.
+- Set "difficulty" to easy, medium or hard (infer it if the source has none).
+- Return ONE output object per input row, keeping "_index" so they can be matched. Do not invent new questions.
 {$extraLine}
-Return ONLY valid JSON in this shape:
-{ "rows": [ { "_index": 0, {$targetShape} } ] }
+Output ONLY this JSON object:
+{ "rows": [ { "_index": 0, {$keysShape} } ] }
 PROMPT;
 
-    // Budget ~180 tokens per row for the filled targets.
-    $maxTokens = (int) min(8000, max(1200, count($rows) * 180 + 600));
-    $parsed   = groq_chat($system, $user, $model, $maxTokens);
-    $filled   = $parsed['rows'] ?? ($parsed['questions'] ?? ($parsed['data'] ?? []));
+    $maxTokens = (int) min(8000, max(1200, count($rows) * 320 + 600));
+    $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.3);
+    $filled    = $parsed['rows'] ?? ($parsed['questions'] ?? ($parsed['data'] ?? []));
     if (!is_array($filled)) {
         $filled = [];
     }
 
-    // Map filled targets back onto the original rows by _index.
+    // Map back by _index, preserving input order and count.
     $byIndex = [];
     foreach ($filled as $f) {
         if (is_array($f) && isset($f['_index'])) {
@@ -371,19 +371,12 @@ PROMPT;
 
     $result = [];
     foreach (array_values($rows) as $i => $row) {
+        $src = $byIndex[$i] ?? [];
         $out = [];
         foreach ($columns as $c) {
-            $out[$c] = isset($row[$c]) ? cell_value($row[$c]) : '';
-        }
-        if (isset($byIndex[$i])) {
-            foreach ($targets as $t) {
-                if (isset($byIndex[$i][$t]) && $byIndex[$i][$t] !== '') {
-                    $out[$t] = cell_value($byIndex[$i][$t]);
-                }
-            }
+            $out[$c] = isset($src[$c]) ? cell_value($src[$c]) : '';
         }
         $result[] = $out;
     }
-
     return $result;
 }

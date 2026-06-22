@@ -37,6 +37,43 @@ define('MAX_ROWS', 100);
 
 define('SETTINGS_FILE', __DIR__ . '/settings.local.php');
 
+/**
+ * The canonical OUTPUT schema. Read from sample_questions.csv so the export
+ * always matches exactly the columns your app imports. Falls back to a known
+ * MCQ schema if the file is missing.
+ *
+ * @return string[]
+ */
+function canonical_columns(): array
+{
+    static $cols = null;
+    if ($cols !== null) {
+        return $cols;
+    }
+    $fallback = ['question_text', 'option_a', 'option_b', 'option_c', 'option_d', 'correct_option', 'explanation', 'difficulty'];
+    $file = __DIR__ . '/../sample_questions.csv';
+    if (is_file($file) && ($fh = fopen($file, 'r'))) {
+        $header = fgetcsv($fh, 0, ',', '"', '\\');
+        fclose($fh);
+        if (is_array($header)) {
+            $clean = [];
+            foreach ($header as $i => $h) {
+                $h = trim((string) $h);
+                if ($i === 0) {
+                    $h = preg_replace('/^\xEF\xBB\xBF/', '', $h); // strip BOM
+                }
+                if ($h !== '') {
+                    $clean[] = $h;
+                }
+            }
+            if (count($clean) > 1) {
+                return $cols = $clean;
+            }
+        }
+    }
+    return $cols = $fallback;
+}
+
 /** Default values for Groq settings managed by the UI. */
 function default_settings(): array
 {
