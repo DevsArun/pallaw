@@ -74,38 +74,88 @@ function groq_request(array $body, string $key): array
     return [$httpCode, is_array($decoded) ? $decoded : null, (string) $response, $curlErr];
 }
 
+/** Is this response a rate-limit (TPM/RPM) rejection? */
+function groq_is_rate_limited(int $code, ?array $body): bool
+{
+    if ($code === 429) {
+        return true;
+    }
+    return ($body['error']['code'] ?? '') === 'rate_limit_exceeded';
+}
+
+/** Pull the suggested wait (seconds) out of a rate-limit message. */
+function groq_retry_after(?array $body): float
+{
+    $msg = $body['error']['message'] ?? '';
+    if (is_string($msg) && preg_match('/try again in ([\d.]+)\s*s/i', $msg, $m)) {
+        return (float) $m[1];
+    }
+    return 0.0;
+}
+
+/** Friendly message for a rate-limit failure. */
+function groq_rate_limit_message(?array $body): string
+{
+    $wait = groq_retry_after($body);
+    $waitTxt = $wait > 0 ? ('about ' . ceil($wait) . 's') : 'a bit';
+    return 'Groq rate limit reached (free tier allows a limited number of tokens per minute). '
+        . 'Please wait ' . $waitTxt . ' and try again, or reduce the count, or switch to a lighter model '
+        . 'like "Llama 3.1 8B (instant)" in the settings dropdown.';
+}
+
 /**
- * Resilient chat call. Tries strict JSON mode first, then retries in plain
- * mode (and even salvages Groq's partial 'failed_generation') so odd inputs
- * don't blow up. Returns the decoded JSON object.
+ * Resilient chat call.
+ *   - Strict JSON mode first; salvages partials and retries in plain mode.
+ *   - Rate limits are handled separately: short waits auto-retry once,
+ *     longer ones return a clear message WITHOUT burning more tokens.
+ *
+ * @param int $maxTokens  completion-token budget (keeps us under TPM limits)
  */
-function groq_chat(string $systemPrompt, string $userPrompt, string $model): array
+function groq_chat(string $systemPrompt, string $userPrompt, string $model, int $maxTokens = 3000): array
 {
     $key = (string) setting('groq_api_key');
     if ($key === '') {
         throw new RuntimeException('Groq API key is not set. Open Settings and add your key.');
     }
     $model = $model !== '' ? $model : (string) setting('groq_model');
+    $maxTokens = max(800, min(8000, $maxTokens));
 
     $messages = [
         ['role' => 'system', 'content' => $systemPrompt],
         ['role' => 'user', 'content' => $userPrompt],
     ];
 
-    // --- Attempt 1: strict JSON mode ---
-    [$code, $body, $raw, $err] = groq_request([
+    $strictBody = [
         'model'           => $model,
         'temperature'     => 0.4,
-        'max_tokens'      => 8000,
+        'max_tokens'      => $maxTokens,
         'response_format' => ['type' => 'json_object'],
         'messages'        => $messages,
-    ], $key);
+    ];
+
+    // --- Attempt 1: strict JSON mode ---
+    [$code, $body, $raw, $err] = groq_request($strictBody, $key);
 
     if ($code >= 200 && $code < 300) {
         $parsed = extract_json($body['choices'][0]['message']['content'] ?? '');
         if ($parsed !== null) {
             return $parsed;
         }
+    } elseif (groq_is_rate_limited($code, $body)) {
+        // Do NOT fire more requests on a rate limit. Auto-retry only for short waits.
+        $wait = groq_retry_after($body);
+        if ($wait > 0 && $wait <= 12) {
+            sleep((int) ceil($wait) + 1);
+            [$rc, $rb] = groq_request($strictBody, $key);
+            if ($rc >= 200 && $rc < 300) {
+                $parsed = extract_json($rb['choices'][0]['message']['content'] ?? '');
+                if ($parsed !== null) {
+                    return $parsed;
+                }
+            }
+            throw new RuntimeException(groq_rate_limit_message($rb ?? $body));
+        }
+        throw new RuntimeException(groq_rate_limit_message($body));
     } elseif ($body !== null) {
         // Groq sometimes returns a usable partial in failed_generation.
         $failed = $body['error']['failed_generation'] ?? '';
@@ -119,7 +169,7 @@ function groq_chat(string $systemPrompt, string $userPrompt, string $model): arr
         throw new RuntimeException('Could not reach Groq API: ' . ($err ?: 'no response'));
     }
 
-    // --- Attempt 2: plain mode, ask explicitly for raw JSON ---
+    // --- Attempt 2: plain mode (only for non-rate-limit failures) ---
     $messages2 = $messages;
     $messages2[] = [
         'role'    => 'system',
@@ -128,7 +178,7 @@ function groq_chat(string $systemPrompt, string $userPrompt, string $model): arr
     [$code2, $body2, $raw2, $err2] = groq_request([
         'model'       => $model,
         'temperature' => 0.3,
-        'max_tokens'  => 8000,
+        'max_tokens'  => $maxTokens,
         'messages'    => $messages2,
     ], $key);
 
@@ -137,6 +187,8 @@ function groq_chat(string $systemPrompt, string $userPrompt, string $model): arr
         if ($parsed !== null) {
             return $parsed;
         }
+    } elseif (groq_is_rate_limited($code2, $body2)) {
+        throw new RuntimeException(groq_rate_limit_message($body2));
     }
 
     // Build a helpful error.
@@ -237,7 +289,9 @@ Output ONLY this JSON object (no markdown, no analysis, no commentary):
 { "questions": [ { {$keysShape} } ] }
 PROMPT;
 
-    $parsed    = groq_chat($system, $user, $model);
+    // Budget ~300 completion tokens per question (keeps us under TPM limits).
+    $maxTokens = (int) min(8000, max(1200, $count * 300 + 600));
+    $parsed    = groq_chat($system, $user, $model, $maxTokens);
     $questions = $parsed['questions'] ?? ($parsed['data'] ?? []);
     if (!is_array($questions)) {
         $questions = [];
@@ -298,7 +352,9 @@ Return ONLY valid JSON in this shape:
 { "rows": [ { "_index": 0, {$targetShape} } ] }
 PROMPT;
 
-    $parsed   = groq_chat($system, $user, $model);
+    // Budget ~180 tokens per row for the filled targets.
+    $maxTokens = (int) min(8000, max(1200, count($rows) * 180 + 600));
+    $parsed   = groq_chat($system, $user, $model, $maxTokens);
     $filled   = $parsed['rows'] ?? ($parsed['questions'] ?? ($parsed['data'] ?? []));
     if (!is_array($filled)) {
         $filled = [];
