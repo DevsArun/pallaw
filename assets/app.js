@@ -97,8 +97,25 @@ function readTableFile(file, cb) {
 }
 function rowsToObjects(rows) {
   if (!rows.length) return { hdrs: [], objs: [] };
-  const hdrs = rows[0].map((h) => h.trim());
-  const objs = rows.slice(1).map((r) => { const o = {}; hdrs.forEach((h, i) => (o[h] = (r[i] ?? '').trim())); return o; });
+  const nonEmpty = (r) => r.filter((c) => String(c).trim() !== '').length;
+  // Pick the header row: first row with 2+ non-empty cells (skips title/blank rows).
+  let hi = rows.findIndex((r) => nonEmpty(r) >= 2);
+  if (hi < 0) hi = 0;
+  const rawHdr = rows[hi];
+  // Build clean, unique header names (empty -> column_N, dupes -> name_2 ...).
+  const seen = {};
+  const hdrs = rawHdr.map((h, i) => {
+    let name = String(h ?? '').trim();
+    if (name === '') name = 'column_' + (i + 1);
+    if (seen[name] === undefined) { seen[name] = 1; return name; }
+    seen[name] += 1;
+    return name + '_' + seen[name];
+  });
+  const objs = rows.slice(hi + 1).map((r) => {
+    const o = {};
+    hdrs.forEach((h, i) => (o[h] = String(r[i] ?? '').trim()));
+    return o;
+  });
   return { hdrs, objs };
 }
 function escapeCSV(v) { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
