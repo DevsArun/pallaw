@@ -15,9 +15,10 @@ const API = {
   download: (id) => `api/download.php?id=${encodeURIComponent(id)}`,
 };
 
-const CHUNK_GEN = 8;     // questions generated per request
+const CHUNK_GEN = 10;    // questions generated per request (fewer requests = less overhead = fewer rate limits)
 const CHUNK_SOLVE = 6;   // rows solved per request
-const CHUNK_DELAY = 700; // ms between chunks (eases rate limits)
+const CHUNK_DELAY = 900; // ms between chunks
+const RATE_RE = /rate limit|tokens per minute|try again in|TPM/i;
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]));
@@ -170,7 +171,8 @@ async function api(url, opts) {
   if (r.status === 401) { showLogin(); throw new Error('Session expired. Please sign in again.'); }
   return r;
 }
-function parseWait(msg) { const m = String(msg || '').match(/about\s+(\d+)\s*s|in\s+([\d.]+)\s*s/i); const n = m ? parseFloat(m[1] || m[2]) : 0; return Math.min(60, Math.max(0, Math.ceil(n))) || 20; }
+function parseWait(msg) { const m = String(msg || '').match(/about\s+(\d+)\s*s|in\s+([\d.]+)\s*s/i); const n = m ? parseFloat(m[1] || m[2]) : 0; return Math.min(90, Math.max(5, Math.ceil(n))) || 20; }
+const isRateLimited = (resp, data) => resp.status === 429 || RATE_RE.test((data && data.error) || '');
 
 /* ---------- clock ---------- */
 let clockTimer;
@@ -245,7 +247,7 @@ async function gRun() {
 
   gen.running = true; gen.results = []; gen.headers = [];
   const seen = new Set();
-  let stall = 0;
+  let stall = 0, rlWaits = 0;
   $('gResultCard').classList.add('hidden');
   $('gRun').disabled = true;
   showProgress('g', 0, target, `Starting…`);
@@ -254,21 +256,26 @@ async function gRun() {
   try {
     while (gen.results.length < target) {
       const want = Math.min(CHUNK_GEN, target - gen.results.length);
-      const avoid = [...seen].slice(-60);
+      const qcolGuess = gen.headers.includes('question_text') ? 'question_text' : (gen.headers[0] || 'question_text');
+      // Keep the avoid list SMALL (recent only, truncated) so requests stay cheap.
+      const avoid = gen.results.slice(-12).map((r) => String(r[qcolGuess] || '').slice(0, 90)).filter(Boolean);
       let resp;
       try {
         resp = await api(API.generate, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ samples: gen.samples.slice(0, 6), topic, count: want, model, extra, avoid }),
+          body: JSON.stringify({ samples: gen.samples.slice(0, 4), topic, count: want, model, extra, avoid }),
         });
       } catch (e) { setStatus('gStatus', e.message, 'err'); break; }
 
-      const data = await resp.json();
-      if (resp.status === 429) {
+      const data = await resp.json().catch(() => ({}));
+      if (isRateLimited(resp, data)) {
+        rlWaits++;
+        if (rlWaits > 12) { setStatus('gStatus', `Groq free-tier limit is busy. Generated ${gen.results.length} so far (saved). Click Generate again in a minute to add more.`, 'ok'); break; }
         const w = parseWait(data.error);
-        for (let s = w; s > 0; s--) { showProgress('g', gen.results.length, target, `Rate limit — waiting ${s}s…`); await sleep(1000); }
+        for (let s = w; s > 0; s--) { showProgress('g', gen.results.length, target, `Rate limit — waiting ${s}s (${gen.results.length}/${target} done)`); await sleep(1000); }
         continue;
       }
+      rlWaits = 0;
       if (!resp.ok) { setStatus('gStatus', data.error || 'Generation failed', 'err'); break; }
 
       if (Array.isArray(data.columns) && data.columns.length) gen.headers = data.columns;
@@ -334,6 +341,7 @@ async function sRun() {
   const total = sol.rows.length;
 
   sol.running = true; sol.results = []; sol.headers = [];
+  let rlWaits = 0;
   $('sResultCard').classList.add('hidden');
   $('sRun').disabled = true;
   showProgress('s', 0, total, 'Starting…');
@@ -351,12 +359,15 @@ async function sRun() {
         });
       } catch (e) { setStatus('sStatus', e.message, 'err'); break; }
 
-      const data = await resp.json();
-      if (resp.status === 429) {
+      const data = await resp.json().catch(() => ({}));
+      if (isRateLimited(resp, data)) {
+        rlWaits++;
+        if (rlWaits > 14) { setStatus('sStatus', `Free-tier limit is busy. Solved ${sol.results.length}/${total} so far (saved). Run again in a minute for the rest.`, 'ok'); break; }
         const w = parseWait(data.error);
-        for (let s = w; s > 0; s--) { showProgress('s', sol.results.length, total, `Rate limit — waiting ${s}s…`); await sleep(1000); }
+        for (let s = w; s > 0; s--) { showProgress('s', sol.results.length, total, `Rate limit — waiting ${s}s (${sol.results.length}/${total} done)`); await sleep(1000); }
         continue; // retry same slice
       }
+      rlWaits = 0;
       if (!resp.ok) { setStatus('sStatus', data.error || 'Solving failed', 'err'); break; }
 
       if (Array.isArray(data.columns) && data.columns.length) sol.headers = data.columns;

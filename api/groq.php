@@ -212,6 +212,21 @@ function cell_value($v): string
     return $v === null ? '' : json_encode($v, JSON_UNESCAPED_UNICODE);
 }
 
+/** Clean a single canonical cell: strip option-letter prefixes, normalize correct_option. */
+function canonicalize_cell(string $col, string $val): string
+{
+    if (preg_match('/^option_[a-d]$/i', $col)) {
+        // "(A) 12" / "a) 12" / "A. 12" / "[b] 5" -> "12" / "5"
+        return preg_replace('/^\s*[\(\[]?\s*[A-Da-d]\s*[\)\]\.\:\-]\s*/u', '', $val);
+    }
+    if (preg_match('/^correct/i', $col)) {
+        if (preg_match('/[A-Da-d]/', $val, $m)) {
+            return strtoupper($m[0]); // keep only the option letter
+        }
+    }
+    return $val;
+}
+
 /** Normalize a list of rows so every row has exactly the given columns. */
 function normalize_rows(array $rows, array $columns): array
 {
@@ -222,7 +237,8 @@ function normalize_rows(array $rows, array $columns): array
         }
         $row = [];
         foreach ($columns as $c) {
-            $row[$c] = isset($r[$c]) ? cell_value($r[$c]) : '';
+            $val = isset($r[$c]) ? cell_value($r[$c]) : '';
+            $row[$c] = canonicalize_cell($c, $val);
         }
         $clean[] = $row;
     }
@@ -272,9 +288,9 @@ function groq_generate(array $columns, array $samples, string $topic, int $count
     }
 
     $system = 'You are a senior exam-paper author. You write fresh, varied, exam-ready multiple-choice '
-        . 'questions and a correct step-by-step solution for each. Every question must be genuinely '
-        . 'different — vary the numbers, scenarios, sub-topics and phrasing. You output ONLY a single JSON '
-        . 'object {"questions":[...]} whose items use EXACTLY the given output keys. No analysis, no extra keys.';
+        . 'questions and a SHORT correct solution for each. Every question must be genuinely different — '
+        . 'vary the sub-topic, structure, scenario and numbers. You output ONLY a single JSON object '
+        . '{"questions":[...]} whose items use EXACTLY the given output keys. No analysis, no extra keys.';
 
     $user = <<<PROMPT
 Here are sample questions (study their topic, difficulty and style — your output may use different column names than these):
@@ -285,19 +301,19 @@ OUTPUT COLUMNS — each generated question MUST be an object with EXACTLY these 
 
 TASK:
 {$topicLine}
-- Make every question DISTINCT and realistic. Do not output the same template repeatedly.
-- Fill option columns (option_a..option_d) with four plausible, distinct choices.
-- Set correct_option to the right choice's LETTER (A, B, C or D) and make sure it is actually correct.
-- ALWAYS write a clear, correct, step-by-step SOLUTION in the "explanation" key. Never leave it blank.
+- VARIETY IS CRITICAL: do not keep repeating the same 1-2 templates. Mix different sub-topics, patterns and number ranges so the set feels like a real exam paper.
+- Fill option columns (option_a..option_d) with four plausible, distinct choices. Put ONLY the value — do NOT prefix options with "(A)", "(a)", "A.", etc. The letter belongs only in correct_option.
+- Set correct_option to just the LETTER of the right choice (A, B, C or D) and make sure it is genuinely correct.
+- Write the "explanation" SHORT: 1-2 lines with only the key steps — clear enough to understand, never a long paragraph. Never leave it blank.
 - Set "difficulty" to one of: easy, medium, hard.
 {$avoidLine}{$extraLine}
 Output ONLY this JSON object (no markdown, no commentary):
 { "questions": [ { {$keysShape} } ] }
 PROMPT;
 
-    // ~320 completion tokens per question; higher temperature for variety.
-    $maxTokens = (int) min(8000, max(1200, $count * 320 + 600));
-    $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.85);
+    // Short explanations -> fewer tokens -> fewer rate limits.
+    $maxTokens = (int) min(6000, max(900, $count * 190 + 500));
+    $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.9);
     $questions = $parsed['questions'] ?? ($parsed['data'] ?? []);
     if (!is_array($questions)) {
         $questions = [];
@@ -344,9 +360,10 @@ OUTPUT COLUMNS — convert EVERY row into an object with EXACTLY these keys (plu
 {$columnList}
 
 TASK:
-- Keep the question text and all options EXACTLY as in the source (just map them into question_text and option_a..option_d).
-- Determine the correct answer and set correct_option to its LETTER (A, B, C or D).
-- ALWAYS write a clear, correct, step-by-step SOLUTION in the "explanation" key. Never leave it blank.
+- Keep the question text and all options EXACTLY as in the source (map them into question_text and option_a..option_d).
+- In option_a..option_d put ONLY the value — strip any leading "(A)", "(a)", "A." labels. The letter belongs only in correct_option.
+- Determine the correct answer and set correct_option to just its LETTER (A, B, C or D).
+- Write the "explanation" SHORT: 1-2 lines with only the key steps — clear but concise. Never leave it blank.
 - Set "difficulty" to easy, medium or hard (infer it if the source has none).
 - Return ONE output object per input row, keeping "_index" so they can be matched. Do not invent new questions.
 {$extraLine}
@@ -354,7 +371,7 @@ Output ONLY this JSON object:
 { "rows": [ { "_index": 0, {$keysShape} } ] }
 PROMPT;
 
-    $maxTokens = (int) min(8000, max(1200, count($rows) * 320 + 600));
+    $maxTokens = (int) min(6000, max(900, count($rows) * 190 + 500));
     $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.3);
     $filled    = $parsed['rows'] ?? ($parsed['questions'] ?? ($parsed['data'] ?? []));
     if (!is_array($filled)) {
@@ -374,7 +391,8 @@ PROMPT;
         $src = $byIndex[$i] ?? [];
         $out = [];
         foreach ($columns as $c) {
-            $out[$c] = isset($src[$c]) ? cell_value($src[$c]) : '';
+            $val = isset($src[$c]) ? cell_value($src[$c]) : '';
+            $out[$c] = canonicalize_cell($c, $val);
         }
         $result[] = $out;
     }
