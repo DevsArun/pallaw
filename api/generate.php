@@ -13,6 +13,34 @@ require_once __DIR__ . '/groq.php';
 
 require_auth();
 
+/* ---- column helpers (ensure a solution column + fresh numbering) ---- */
+function pallaw_norm(string $s): string
+{
+    return preg_replace('/[\s._\-#]/', '', strtolower($s));
+}
+function pallaw_has_explanation(array $cols): bool
+{
+    foreach ($cols as $c) {
+        $n = pallaw_norm((string) $c);
+        foreach (['explanation', 'solution', 'working', 'step', 'reason', 'soln'] as $h) {
+            if (strpos($n, $h) !== false) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+function pallaw_id_column(array $cols): ?string
+{
+    $ids = ['pk', 'id', 'sno', 'srno', 'serial', 'serialno', 'sl', 'slno', 'no', 'number', 'qno', 'rollno', 'roll', 'index', 'idx', 'sr'];
+    foreach ($cols as $c) {
+        if (in_array(pallaw_norm((string) $c), $ids, true)) {
+            return $c;
+        }
+    }
+    return null;
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     json_response(405, ['error' => 'Method not allowed. Use POST.']);
 }
@@ -27,11 +55,16 @@ $extra   = trim((string) ($in['extra'] ?? ''));
 $source  = trim((string) ($in['source'] ?? ''));
 
 if (empty($columns)) {
-    json_response(400, ['error' => 'No CSV columns provided. Upload a sample CSV first.']);
+    json_response(400, ['error' => 'No CSV columns provided. Upload a sample file first.']);
 }
 // Topic is OPTIONAL — when empty the AI infers it from the samples.
 if ($topic === '' && empty($samples)) {
     json_response(400, ['error' => 'Add a topic, or upload samples so the AI can infer one.']);
+}
+
+// Always make sure the output has a solution/explanation column.
+if (!pallaw_has_explanation($columns)) {
+    $columns[] = 'Explanation';
 }
 
 try {
@@ -41,13 +74,24 @@ try {
 }
 
 if (empty($questions)) {
-    json_response(200, ['questions' => [], 'job_id' => null, 'saved' => false]);
+    json_response(200, ['questions' => [], 'columns' => $columns, 'job_id' => null, 'saved' => false]);
+}
+
+// Fresh, sequential numbering (1..N) for any id/serial column.
+$idCol = pallaw_id_column($columns);
+if ($idCol !== null) {
+    $n = 1;
+    foreach ($questions as &$q) {
+        $q[$idCol] = (string) $n++;
+    }
+    unset($q);
 }
 
 $jobId = save_job('generate', $topic, $source, $columns, $model !== '' ? $model : (string) setting('groq_model'), $questions);
 
 json_response(200, [
     'questions' => $questions,
+    'columns'   => $columns,
     'job_id'    => $jobId,
     'saved'     => $jobId !== null,
 ]);

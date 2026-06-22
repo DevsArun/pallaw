@@ -236,6 +236,24 @@ function closeSidebar() { if (window.innerWidth < 1024) { $('sidebar').classList
    GENERATE
    ============================================================ */
 const gen = { headers: [], samples: [], source: '', results: [] };
+
+// Detect/ensure the solution column + fresh numbering column.
+const EXPL_HINTS = ['explanation', 'solution', 'working', 'step', 'reason', 'soln'];
+const ID_NAMES = ['pk', 'id', 'sno', 'srno', 'serial', 'serialno', 'sl', 'slno', 'no', 'number', 'qno', 'rollno', 'roll', 'index', 'idx', 'sr'];
+const normName = (s) => String(s || '').toLowerCase().replace(/[\s._\-#]/g, '');
+const hasExplanationCol = (cols) => cols.some((c) => EXPL_HINTS.some((h) => normName(c).includes(h)));
+const findIdCol = (cols) => cols.find((c) => ID_NAMES.includes(normName(c))) || null;
+function augmentColumns(cols) {
+  const out = cols.slice();
+  if (!hasExplanationCol(out)) out.push('Explanation'); // add a solution column if missing
+  return out;
+}
+// Renumber the id/serial column 1..N across all current results.
+function renumberGen() {
+  const idCol = findIdCol(gen.headers);
+  if (idCol) gen.results.forEach((r, i) => (r[idCol] = String(i + 1)));
+}
+
 function gHandleFile(file) {
   if (!file) return;
   gen.source = file.name;
@@ -243,19 +261,29 @@ function gHandleFile(file) {
     if (err) return setStatus('gStatus', err, 'err');
     const { hdrs, objs } = rowsToObjects(rows || []);
     if (!hdrs.length) return setStatus('gStatus', 'That file looks empty.', 'err');
-    gen.headers = hdrs; gen.samples = objs;
+    gen.headers = augmentColumns(hdrs); // ensure an Explanation column exists
+    gen.samples = objs;
+    const added = gen.headers.length > hdrs.length;
     $('gFileLabel').innerHTML = `<span class="font-semibold text-slate-100">${esc(file.name)}</span> · ${objs.length} rows`;
     $('gRowCount').textContent = `${objs.length} samples`;
-    $('gChips').innerHTML = hdrs.map((h) => `<span class="rounded-full border border-[#232e3f] bg-[#141b27] px-2.5 py-1 text-xs font-medium text-slate-300">${esc(h)}</span>`).join('');
-    renderTable($('gPreviewTable'), hdrs, objs, 5);
+    $('gChips').innerHTML = gen.headers.map((h) => {
+      const isNew = added && h === 'Explanation';
+      const cls = isNew
+        ? 'rounded-full border border-cyan-400/40 bg-cyan-500/10 px-2.5 py-1 text-xs font-medium text-cyan-300'
+        : 'rounded-full border border-[#232e3f] bg-[#141b27] px-2.5 py-1 text-xs font-medium text-slate-300';
+      return `<span class="${cls}">${esc(h)}${isNew ? ' (added)' : ''}</span>`;
+    }).join('');
+    renderTable($('gPreviewTable'), gen.headers, objs, 5);
     $('gPreview').classList.remove('hidden');
+    if (added) setStatus('gStatus', 'No solution column found — an "Explanation" column will be added & filled.', '');
+    else setStatus('gStatus', '');
     gRefresh();
   });
 }
 // Topic optional: enabled as soon as a CSV is loaded.
 function gRefresh() { $('gRun').disabled = !gen.headers.length; }
 async function gRun() {
-  if (!gen.headers.length) return setStatus('gStatus', 'Upload a sample CSV first.', 'err');
+  if (!gen.headers.length) return setStatus('gStatus', 'Upload a sample file first.', 'err');
   const topic = $('gTopic').value.trim();
   const count = parseInt($('gCount').value, 10) || 5;
   $('gRun').disabled = true;
@@ -269,7 +297,9 @@ async function gRun() {
     if (!resp.ok) throw new Error(data.error || 'Generation failed');
     const qs = data.questions || [];
     if (!qs.length) throw new Error('No questions generated. Try again.');
+    if (Array.isArray(data.columns) && data.columns.length) gen.headers = data.columns; // stay in sync
     gen.results = gen.results.concat(qs);
+    renumberGen(); // fresh continuous 1..N numbering
     $('gResultCard').classList.remove('hidden');
     $('gResultCount').textContent = `${gen.results.length}`;
     renderTable($('gResultTable'), gen.headers, gen.results);

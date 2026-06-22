@@ -33,7 +33,7 @@ define('ADMIN_PASSWORD', getenv('ADMIN_PASSWORD') ?: 'pallaw@admin');
    ===================================================================== */
 define('GROQ_URL', 'https://api.groq.com/openai/v1/chat/completions');
 define('DEFAULT_MODEL', 'llama-3.3-70b-versatile');
-define('MAX_ROWS', 50);
+define('MAX_ROWS', 100);
 
 define('SETTINGS_FILE', __DIR__ . '/settings.local.php');
 

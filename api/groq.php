@@ -276,12 +276,13 @@ Samples:
 {$sampleText}
 
 TASK:
+- First STUDY and ANALYZE the sample questions — notice their topic, pattern, structure, option style and difficulty.
 {$topicLine}
 - Match the samples' format and difficulty distribution.
 - Every item MUST contain every column key listed above, filled in.
 - If there are option columns (e.g. OptionA..OptionD), fill all of them with plausible choices.
 - If there is a correct-answer column, put the RIGHT answer (matching the option label format used in the samples, e.g. "B").
-- ALWAYS fill the explanation/solution column with a correct, concise step-by-step working. Do the math carefully and double-check it.
+- ALWAYS write a full step-by-step SOLUTION in the explanation column (any column whose name contains explanation/solution). Do the math carefully and double-check it. Never leave it blank.
 - If there is a difficulty column, use the same vocabulary as the samples (e.g. easy/medium/hard).
 - Do NOT copy the samples; make new questions.
 {$extraLine}
