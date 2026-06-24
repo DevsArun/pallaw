@@ -1,5 +1,5 @@
 /* ============================================================
-   Pallaw — admin panel SPA (dark + cyan)
+   Tunnl AI — admin panel SPA (dark + cyan)
    Auth lock · Dashboard · Question Builder · Solution Builder · Settings
    ============================================================ */
 
@@ -32,7 +32,7 @@ let toastTimer;
 function toast(msg, type = 'ok') {
   const el = $('toast');
   const bg = type === 'err' ? 'bg-rose-600' : type === 'load' ? 'bg-slate-800' : 'bg-emerald-600';
-  el.innerHTML = `<div class="pointer-events-auto flex items-center gap-2 rounded-xl ${bg} px-4 py-2.5 text-sm font-medium text-white shadow-lg ring-1 ring-white/10">${type === 'load' ? '<span class="spinner"></span>' : ''}<span>${esc(msg)}</span></div>`;
+  el.innerHTML = `<div class="pointer-events-auto flex max-w-full items-center gap-2 rounded-xl ${bg} px-4 py-2.5 text-sm font-medium text-white shadow-lg ring-1 ring-white/10">${type === 'load' ? '<span class="spinner shrink-0"></span>' : ''}<span class="min-w-0">${esc(msg)}</span></div>`;
   el.style.opacity = '1';
   clearTimeout(toastTimer);
   if (type !== 'load') toastTimer = setTimeout(() => (el.style.opacity = '0'), 2800);

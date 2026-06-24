@@ -6,8 +6,8 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>Pallaw — AI Question Panel</title>
-    <meta name="description" content="Generate exam-ready math MCQs and auto-add solutions from CSV. Powered by Groq." />
+    <title>Tunnl AI — Question Panel</title>
+    <meta name="description" content="Tunnl AI — generate exam-ready MCQs and auto-add solutions from CSV/Excel. Powered by Groq." />
 
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -60,6 +60,11 @@
       [data-view]{ display:none; }
       [data-view].view-active{ display:block; }
       table th { background:#0e141e; }
+      /* ---- mobile-first tweaks ---- */
+      @media (max-width: 640px) {
+        main .card.p-5 { padding: 1rem; }
+        .field { font-size: 16px; } /* prevents iOS zoom-on-focus */
+      }
     </style>
   </head>
 
@@ -72,7 +77,7 @@
           <div class="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#10151f] ring-1 ring-cyan-400/30">
             <svg class="h-7 w-7 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75M3.75 21.75h16.5a1.5 1.5 0 001.5-1.5v-7.5a1.5 1.5 0 00-1.5-1.5H3.75a1.5 1.5 0 00-1.5 1.5v7.5a1.5 1.5 0 001.5 1.5z"/></svg>
           </div>
-          <h1 class="text-xl font-bold">Pallaw Admin</h1>
+          <h1 class="text-xl font-bold">Tunnl AI</h1>
           <p class="mt-1 text-sm text-slate-400">Sign in to access the panel</p>
         </div>
         <form id="loginForm" class="card p-6">
@@ -100,8 +105,8 @@
               <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/></svg>
             </div>
             <div class="leading-tight">
-              <div class="text-[15px] font-bold tracking-tight">Pallaw</div>
-              <div class="text-[11px] text-slate-500">AI Question Panel</div>
+              <div class="text-[15px] font-bold tracking-tight">Tunnl AI</div>
+              <div class="text-[11px] text-slate-500">Admin Panel</div>
             </div>
           </div>
 
@@ -143,7 +148,7 @@
 
         <!-- MAIN -->
         <div class="flex min-w-0 flex-1 flex-col lg:pl-64">
-          <header class="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-[#161e2b] bg-[#0a0e16]/80 px-5 backdrop-blur">
+          <header class="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-[#161e2b] bg-[#0a0e16]/80 px-4 backdrop-blur sm:px-5">
             <div class="flex items-center gap-3">
               <button id="menuBtn" class="rounded-lg p-2 text-slate-400 hover:bg-[#141b27] lg:hidden"><svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>
               <h1 id="pageTitle" class="text-lg font-bold tracking-tight">Dashboard</h1>
@@ -309,14 +314,14 @@
             </section>
           </main>
 
-          <footer class="border-t border-[#161e2b] py-6 text-center text-xs text-slate-600">Pallaw · HTML · Tailwind · PHP · MySQL · Groq · <span class="text-cyan-500/70">build 2.5</span></footer>
+          <footer class="border-t border-[#161e2b] py-6 text-center text-xs text-slate-600">Tunnl AI · HTML · Tailwind · PHP · MySQL · Groq · <span class="text-cyan-500/70">build 2.6</span></footer>
         </div>
       </div>
     </div>
 
-    <div id="toast" class="pointer-events-none fixed bottom-5 left-1/2 z-[60] -translate-x-1/2 opacity-0 transition-opacity"></div>
+    <div id="toast" class="pointer-events-none fixed bottom-5 left-1/2 z-[60] flex w-[92vw] max-w-md -translate-x-1/2 justify-center px-2 opacity-0 transition-opacity"></div>
     <!-- SheetJS: parse .xlsx / .xls / .ods / .tsv client-side (output stays CSV) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="assets/app.js?v=20260622e"></script>
+    <script src="assets/app.js?v=20260622f"></script>
   </body>
 </html>

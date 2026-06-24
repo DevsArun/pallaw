@@ -1,4 +1,4 @@
-# Pallaw — AI Question Panel
+# Tunnl AI — Question Panel
 
 A locked, dashboard-based admin panel to **build math MCQs** and **auto-add solutions**
 from CSV files — in the exact format your app imports. Powered by the **Groq API**.
