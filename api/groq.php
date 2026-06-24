@@ -263,12 +263,17 @@ function groq_generate(array $columns, array $samples, string $topic, int $count
     $columnList = implode(', ', $columns);
     $keysShape  = implode(', ', array_map(fn ($c) => '"' . $c . '": "..."', $columns));
 
-    // Show the samples exactly as uploaded so the model learns the real style.
+    // Show representative samples (already curated to cover the distinct types).
     $sampleLines = [];
-    foreach (array_slice($samples, 0, 6) as $i => $row) {
-        $sampleLines[] = 'Sample ' . ($i + 1) . ': ' . json_encode($row, JSON_UNESCAPED_UNICODE);
+    foreach (array_slice($samples, 0, 14) as $i => $row) {
+        $trim = [];
+        foreach ((array) $row as $k => $v) {
+            $trim[$k] = mb_substr((string) (is_scalar($v) ? $v : json_encode($v)), 0, 160);
+        }
+        $sampleLines[] = 'Type ' . ($i + 1) . ': ' . json_encode($trim, JSON_UNESCAPED_UNICODE);
     }
     $sampleText = $sampleLines ? implode("\n", $sampleLines) : '(none provided)';
+    $typeCount  = count($sampleLines);
 
     $extraLine = $extra !== '' ? "- Extra instructions from the user: {$extra}\n" : '';
 
@@ -293,7 +298,7 @@ function groq_generate(array $columns, array $samples, string $topic, int $count
         . '{"questions":[...]} whose items use EXACTLY the given output keys. No analysis, no extra keys.';
 
     $user = <<<PROMPT
-Here are sample questions (study their topic, difficulty and style — your output may use different column names than these):
+Below are representative questions showing the {$typeCount} DIFFERENT question type(s) found in the source file (your output may use different column names than these):
 {$sampleText}
 
 OUTPUT COLUMNS — each generated question MUST be an object with EXACTLY these keys (same spelling/case):
@@ -301,7 +306,8 @@ OUTPUT COLUMNS — each generated question MUST be an object with EXACTLY these 
 
 TASK:
 {$topicLine}
-- VARIETY IS CRITICAL: do not keep repeating the same 1-2 templates. Mix different sub-topics, patterns and number ranges so the set feels like a real exam paper.
+- COVER ALL THE TYPES shown above. Spread the {$count} questions as a BALANCED MIX across every type — do NOT keep repeating just one or two patterns.
+- Within each type, vary the numbers, values and scenario a lot so no two questions feel the same.
 - Fill option columns (option_a..option_d) with four plausible, distinct choices. Put ONLY the value — do NOT prefix options with "(A)", "(a)", "A.", etc. The letter belongs only in correct_option.
 - Set correct_option to just the LETTER of the right choice (A, B, C or D) and make sure it is genuinely correct.
 - Write the "explanation" SHORT: 1-2 lines with only the key steps — clear enough to understand, never a long paragraph. Never leave it blank.

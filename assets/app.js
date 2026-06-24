@@ -217,7 +217,43 @@ function closeSidebar() { if (window.innerWidth < 1024) { $('sidebar').classList
 /* ============================================================
    GENERATE (chunked, unique, progress)
    ============================================================ */
-const gen = { samples: [], previewHdrs: [], source: '', headers: [], results: [], running: false };
+const gen = { samples: [], diverseSamples: [], typeCount: 0, previewHdrs: [], qcol: '', source: '', headers: [], results: [], running: false };
+
+// Find the column holding the question text (by name, else longest-text column).
+function findQuestionCol(hdrs, objs) {
+  const byName = hdrs.find((h) => /quest|ques|problem/i.test(h));
+  if (byName) return byName;
+  let best = hdrs[0], bestLen = -1;
+  for (const h of hdrs) {
+    let len = 0; const n = Math.min(objs.length, 20);
+    for (let i = 0; i < n; i++) len += String(objs[i][h] || '').length;
+    const avg = n ? len / n : 0;
+    if (avg > bestLen) { bestLen = avg; best = h; }
+  }
+  return best;
+}
+// Signature that ignores numbers, so "series: 1,2,3" and "series: 5,6,7" group together.
+function qSignature(t) {
+  return String(t || '').toLowerCase().replace(/\d+(\.\d+)?/g, '#').replace(/[^a-z#? ]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 50);
+}
+// Pick representatives covering EVERY distinct question type in the file.
+function buildDiverseSamples(objs, qcol, cap = 14) {
+  const groups = new Map();
+  for (const o of objs) {
+    const sig = qSignature(o[qcol]);
+    if (!groups.has(sig)) groups.set(sig, []);
+    groups.get(sig).push(o);
+  }
+  const keys = [...groups.keys()];
+  const picked = [];
+  let round = 0;
+  while (picked.length < cap) {
+    let added = false;
+    for (const k of keys) { const arr = groups.get(k); if (round < arr.length) { picked.push(arr[round]); added = true; if (picked.length >= cap) break; } }
+    if (!added) break; round++;
+  }
+  return { picked, typeCount: keys.length };
+}
 
 function gHandleFile(file) {
   if (!file) return;
@@ -227,12 +263,15 @@ function gHandleFile(file) {
     const { hdrs, objs } = rowsToObjects(rows || []);
     if (!hdrs.length) return setStatus('gStatus', 'That file looks empty.', 'err');
     gen.previewHdrs = hdrs; gen.samples = objs;
+    gen.qcol = findQuestionCol(hdrs, objs);
+    const { picked, typeCount } = buildDiverseSamples(objs, gen.qcol, 14);
+    gen.diverseSamples = picked; gen.typeCount = typeCount;
     $('gFileLabel').innerHTML = `<span class="font-semibold text-slate-100">${esc(file.name)}</span> · ${objs.length} rows`;
-    $('gRowCount').textContent = `${objs.length} samples`;
+    $('gRowCount').textContent = `${objs.length} rows · ${typeCount} type${typeCount === 1 ? '' : 's'}`;
     $('gChips').innerHTML = hdrs.map((h) => `<span class="rounded-full border border-[#232e3f] bg-[#141b27] px-2.5 py-1 text-xs font-medium text-slate-300">${esc(h)}</span>`).join('');
     renderTable($('gPreviewTable'), hdrs, objs, 5);
     $('gPreview').classList.remove('hidden');
-    setStatus('gStatus', '');
+    setStatus('gStatus', `Detected ${typeCount} question type${typeCount === 1 ? '' : 's'} — output will mix across all of them.`, '');
     gRefresh();
   });
 }
@@ -263,7 +302,7 @@ async function gRun() {
       try {
         resp = await api(API.generate, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ samples: gen.samples.slice(0, 4), topic, count: want, model, extra, avoid }),
+          body: JSON.stringify({ samples: (gen.diverseSamples.length ? gen.diverseSamples : gen.samples).slice(0, 14), topic, count: want, model, extra, avoid }),
         });
       } catch (e) { setStatus('gStatus', e.message, 'err'); break; }
 
