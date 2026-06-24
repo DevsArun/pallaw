@@ -246,6 +246,135 @@ function normalize_rows(array $rows, array $columns): array
 }
 
 /* ============================================================
+   Arithmetic verification — LLMs are unreliable at maths, so for
+   questions that are plain expressions (e.g. "87 × 94 = ?") we
+   compute the answer ourselves and fix correct_option + explanation.
+   ============================================================ */
+
+/** Safely evaluate a sanitized arithmetic string (+ - * / and parens). */
+function shunting_eval(string $s): ?float
+{
+    $tokens = []; $i = 0; $n = strlen($s); $prev = null;
+    while ($i < $n) {
+        $c = $s[$i];
+        if (ctype_digit($c) || $c === '.') {
+            $num = '';
+            while ($i < $n && (ctype_digit($s[$i]) || $s[$i] === '.')) { $num .= $s[$i]; $i++; }
+            $tokens[] = ['num', (float) $num]; $prev = 'num'; continue;
+        }
+        if (strpos('+-*/', $c) !== false) {
+            if (($c === '-' || $c === '+') && ($prev === null || $prev === 'op' || $prev === '(')) {
+                $tokens[] = ['num', 0.0]; $tokens[] = ['op', $c]; $prev = 'op'; $i++; continue;
+            }
+            $tokens[] = ['op', $c]; $prev = 'op'; $i++; continue;
+        }
+        if ($c === '(') { $tokens[] = ['(', '(']; $prev = '('; $i++; continue; }
+        if ($c === ')') { $tokens[] = [')', ')']; $prev = ')'; $i++; continue; }
+        return null;
+    }
+    $out = []; $ops = []; $prec = ['+' => 1, '-' => 1, '*' => 2, '/' => 2];
+    foreach ($tokens as $t) {
+        if ($t[0] === 'num') { $out[] = $t; }
+        elseif ($t[0] === 'op') {
+            while (!empty($ops) && end($ops)[0] === 'op' && $prec[end($ops)[1]] >= $prec[$t[1]]) { $out[] = array_pop($ops); }
+            $ops[] = $t;
+        } elseif ($t[0] === '(') { $ops[] = $t; }
+        elseif ($t[0] === ')') {
+            while (!empty($ops) && end($ops)[0] !== '(') { $out[] = array_pop($ops); }
+            if (empty($ops)) { return null; }
+            array_pop($ops);
+        }
+    }
+    while (!empty($ops)) { $o = array_pop($ops); if ($o[0] === '(') { return null; } $out[] = $o; }
+    $st = [];
+    foreach ($out as $t) {
+        if ($t[0] === 'num') { $st[] = $t[1]; }
+        else {
+            if (count($st) < 2) { return null; }
+            $b = array_pop($st); $a = array_pop($st);
+            switch ($t[1]) {
+                case '+': $st[] = $a + $b; break;
+                case '-': $st[] = $a - $b; break;
+                case '*': $st[] = $a * $b; break;
+                case '/': if ($b == 0.0) { return null; } $st[] = $a / $b; break;
+            }
+        }
+    }
+    return count($st) === 1 ? $st[0] : null;
+}
+
+/** Turn human text into a clean expression and evaluate it. */
+function eval_expr_string(string $expr): ?float
+{
+    $s = $expr;
+    $s = preg_replace('/(\d+(?:\.\d+)?)\s*%\s*of\s*/i', '($1/100)*', $s);
+    $s = preg_replace('/(\d+(?:\.\d+)?)\s*%/', '($1/100)', $s);
+    $s = str_replace(['×', '✕', '⋅', '·'], '*', $s);
+    $s = str_replace(['÷'], '/', $s);
+    $s = str_replace(['−', '–', '—'], '-', $s);
+    $s = preg_replace('/(\d|\))\s*[xX]\s*(\d|\()/', '$1*$2', $s);
+    $s = preg_replace('/(\d),(\d{3})\b/', '$1$2', $s);
+    $s = str_replace(' ', '', (string) $s);
+    if ($s === '' || preg_match('/[^0-9.+\-*\/()]/', $s)) { return null; }
+    return shunting_eval($s);
+}
+
+/** If the question is "EXPR = ?" (or "? = EXPR"), return the numeric answer. */
+function eval_question(string $q): ?float
+{
+    if (strpos($q, '=') === false) { return null; }
+    $parts = explode('=', $q);
+    if (count($parts) < 2) { return null; }
+    $rhs = trim(end($parts));
+    if ($rhs === '?') {
+        $expr = implode('=', array_slice($parts, 0, -1));
+    } elseif (trim($parts[0]) === '?') {
+        $expr = implode('=', array_slice($parts, 1));
+    } else {
+        return null; // anything more complex -> trust the model
+    }
+    return eval_expr_string($expr);
+}
+
+/** Fix correct_option + explanation (and the option value) for verifiable arithmetic questions. */
+function verify_arithmetic(array &$row): void
+{
+    if (!array_key_exists('question_text', $row)) { return; }
+    $q   = (string) $row['question_text'];
+    $ans = eval_question($q);
+    if ($ans === null || !is_finite($ans)) { return; }
+
+    $cols = ['option_a', 'option_b', 'option_c', 'option_d'];
+    $letters = ['A', 'B', 'C', 'D'];
+    $best = null; $bestDiff = null; $bestCol = null;
+    foreach ($cols as $idx => $oc) {
+        if (!isset($row[$oc])) { continue; }
+        $raw = preg_replace('/[^0-9.\-]/', '', (string) $row[$oc]);
+        if ($raw === '' || !is_numeric($raw)) { continue; }
+        $v = (float) $raw; $d = abs($v - $ans);
+        if ($bestDiff === null || $d < $bestDiff) { $bestDiff = $d; $best = $letters[$idx]; $bestCol = $oc; }
+    }
+    if ($best === null) { return; }
+
+    $ansStr   = (abs($ans - round($ans)) < 0.005) ? (string) (int) round($ans) : (string) round($ans, 2);
+    $isApprox = (bool) preg_match('/approx/i', $q);
+
+    if ($isApprox) {
+        // Approximation: just pick the closest existing option (don't rewrite values).
+        if ($bestDiff > max(5.0, abs($ans) * 0.06)) { return; } // our reading likely mismatches
+        if (array_key_exists('correct_option', $row)) { $row['correct_option'] = $best; }
+        if (array_key_exists('explanation', $row)) { $row['explanation'] = 'Approximate value ≈ ' . $ansStr . '.'; }
+        return;
+    }
+
+    // Exact arithmetic: make sure the correct value is actually present.
+    if ($bestDiff > max(100.0, abs($ans) * 0.03)) { return; } // eval likely unrelated to this question
+    if ($bestDiff > 0 && $bestCol !== null) { $row[$bestCol] = $ansStr; } // place exact answer into nearest option
+    if (array_key_exists('correct_option', $row)) { $row['correct_option'] = $best; }
+    if (array_key_exists('explanation', $row)) { $row['explanation'] = trim(preg_replace('/\?/', $ansStr, $q, 1)); }
+}
+
+/* ============================================================
    PART 1 — Generate new questions (output = canonical schema)
    ============================================================ */
 
@@ -319,12 +448,15 @@ PROMPT;
 
     // Short explanations -> fewer tokens -> fewer rate limits.
     $maxTokens = (int) min(6000, max(900, $count * 190 + 500));
-    $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.9);
+    $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.6);
     $questions = $parsed['questions'] ?? ($parsed['data'] ?? []);
     if (!is_array($questions)) {
         $questions = [];
     }
-    return normalize_rows($questions, $columns);
+    $rows = normalize_rows($questions, $columns);
+    foreach ($rows as &$r) { verify_arithmetic($r); } // fix wrong answers/explanations
+    unset($r);
+    return $rows;
 }
 
 /* ============================================================
@@ -400,6 +532,7 @@ PROMPT;
             $val = isset($src[$c]) ? cell_value($src[$c]) : '';
             $out[$c] = canonicalize_cell($c, $val);
         }
+        verify_arithmetic($out); // fix wrong answers/explanations
         $result[] = $out;
     }
     return $result;
