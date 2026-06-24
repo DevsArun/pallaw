@@ -314,6 +314,7 @@ function eval_expr_string(string $expr): ?float
     $s = str_replace(['−', '–', '—'], '-', $s);
     $s = preg_replace('/(\d|\))\s*[xX]\s*(\d|\()/', '$1*$2', $s);
     $s = preg_replace('/(\d),(\d{3})\b/', '$1$2', $s);
+    $s = str_replace('?', '', (string) $s);
     $s = str_replace(' ', '', (string) $s);
     if ($s === '' || preg_match('/[^0-9.+\-*\/()]/', $s)) { return null; }
     return shunting_eval($s);
@@ -333,7 +334,33 @@ function eval_question(string $q): ?float
     } else {
         return null; // anything more complex -> trust the model
     }
+    // Strip a prose lead-in ("...in EXPR", "...equation: EXPR") so we eval just the maths.
+    if (preg_match('/[a-z]/i', $expr)) {
+        $lc = strtolower($expr);
+        foreach ([' in ', ':'] as $mk) {
+            $p = strrpos($lc, $mk);
+            if ($p !== false) { $expr = substr($expr, $p + strlen($mk)); break; }
+        }
+    }
     return eval_expr_string($expr);
+}
+
+/** Build a worked "x% of y + ..." explanation, if the question is that pattern. */
+function approx_explanation(string $q): ?string
+{
+    if (!preg_match_all('/([+\-]?)\s*(\d+(?:\.\d+)?)\s*%\s*of\s*(\d+(?:\.\d+)?)/i', $q, $m, PREG_SET_ORDER)) {
+        return null;
+    }
+    $parts = []; $vals = []; $total = 0.0;
+    foreach ($m as $k => $mm) {
+        $sign = $mm[1] === '-' ? -1 : 1;
+        $term = ($sign * (float) $mm[2] / 100) * (float) $mm[3];
+        $op = $k === 0 ? '' : ($sign < 0 ? ' - ' : ' + ');
+        $parts[] = $op . round((float) $mm[2]) . '% of ' . round((float) $mm[3]);
+        $vals[]  = $op . round(abs($term));
+        $total  += $term;
+    }
+    return implode('', $parts) . ' = ' . implode('', $vals) . ' ≈ ' . round($total);
 }
 
 /** Fix correct_option + explanation (and the option value) for verifiable arithmetic questions. */
@@ -360,10 +387,12 @@ function verify_arithmetic(array &$row): void
     $isApprox = (bool) preg_match('/approx/i', $q);
 
     if ($isApprox) {
-        // Approximation: just pick the closest existing option (don't rewrite values).
+        // Approximation: pick the closest existing option (don't rewrite values).
         if ($bestDiff > max(5.0, abs($ans) * 0.06)) { return; } // our reading likely mismatches
         if (array_key_exists('correct_option', $row)) { $row['correct_option'] = $best; }
-        if (array_key_exists('explanation', $row)) { $row['explanation'] = 'Approximate value ≈ ' . $ansStr . '.'; }
+        if (array_key_exists('explanation', $row)) {
+            $row['explanation'] = approx_explanation($q) ?: ('Approximate value ≈ ' . $ansStr . '.');
+        }
         return;
     }
 
@@ -439,7 +468,7 @@ TASK:
 - Within each type, vary the numbers, values and scenario a lot so no two questions feel the same.
 - Fill option columns (option_a..option_d) with four plausible, distinct choices. Put ONLY the value — do NOT prefix options with "(A)", "(a)", "A.", etc. The letter belongs only in correct_option.
 - Set correct_option to just the LETTER of the right choice (A, B, C or D) and make sure it is genuinely correct.
-- Write the "explanation" SHORT: 1-2 lines with only the key steps — clear enough to understand, never a long paragraph. Never leave it blank.
+- Write a GOOD "explanation": show the actual method and key steps with THIS question's real numbers, ending in the answer. Keep it 1-3 short lines, clear and specific — never reuse the same generic sentence across questions, never leave it blank. Example for "87 × 94 = ?": "87 × 94 = 87×90 + 87×4 = 7830 + 348 = 8178". Example for a number series: "Differences are +3, +5, +7…; 30 breaks the pattern (should be 31)."
 - Set "difficulty" to one of: easy, medium, hard.
 {$avoidLine}{$extraLine}
 Output ONLY this JSON object (no markdown, no commentary):
@@ -501,7 +530,7 @@ TASK:
 - Keep the question text and all options EXACTLY as in the source (map them into question_text and option_a..option_d).
 - In option_a..option_d put ONLY the value — strip any leading "(A)", "(a)", "A." labels. The letter belongs only in correct_option.
 - Determine the correct answer and set correct_option to just its LETTER (A, B, C or D).
-- Write the "explanation" SHORT: 1-2 lines with only the key steps — clear but concise. Never leave it blank.
+- Write a GOOD "explanation": show the actual method and key steps with the real numbers, ending in the answer. Keep it 1-3 short lines, clear and specific to this question — never a generic repeated sentence, never blank.
 - Set "difficulty" to easy, medium or hard (infer it if the source has none).
 - Return ONE output object per input row, keeping "_index" so they can be matched. Do not invent new questions.
 {$extraLine}
