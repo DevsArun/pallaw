@@ -15,9 +15,9 @@ const API = {
   download: (id) => `api/download.php?id=${encodeURIComponent(id)}`,
 };
 
-const CHUNK_GEN = 8;     // questions per request — fewer requests = less repeated overhead = less rate-limit
-const CHUNK_SOLVE = 8;   // rows solved per request
-const CHUNK_DELAY = 500; // ms between chunks
+const CHUNK_GEN = 5;     // questions per request — small so each request fits one minute's limit
+const CHUNK_SOLVE = 5;   // rows solved per request
+const CHUNK_DELAY = 600; // ms between chunks
 const RATE_RE = /rate limit|tokens per minute|try again in|TPM/i;
 
 const $ = (id) => document.getElementById(id);
@@ -286,7 +286,7 @@ async function gRun() {
 
   gen.running = true; gen.results = []; gen.headers = [];
   const seen = new Set();
-  let stall = 0, stoppedMsg = '';
+  let stall = 0, stoppedMsg = '', consecRL = 0;
   const startTs = Date.now(); const MAX_MS = 35 * 60 * 1000;
   $('gResultCard').classList.add('hidden');
   $('gRun').disabled = true;
@@ -310,11 +310,15 @@ async function gRun() {
 
       const data = await resp.json().catch(() => ({}));
       if (isRateLimited(resp, data)) {
-        const w = parseWait(data.error);
-        if (w >= 95) { stoppedMsg = `Groq quota looks used up for now (needs ~${w}s). Generated ${gen.results.length}/${target} (saved). Try later, or use a paid Groq key for big batches.`; break; }
+        consecRL++;
+        const suggested = parseWait(data.error);
+        // If quick retries keep failing, wait a FULL minute so the per-minute limit resets.
+        const w = consecRL >= 2 ? Math.max(suggested, 60) : suggested;
+        if (suggested > 70 && consecRL > 8) { stoppedMsg = `Groq quota is busy for a long time. Generated ${gen.results.length}/${target} (saved). Try later, or use a paid Groq key for big batches.`; break; }
         for (let s = w; s > 0; s--) { showProgress('g', gen.results.length, target, `Rate limit — waiting ${s}s (${gen.results.length}/${target} done)`); await sleep(1000); }
         continue; // keep retrying — never give up on a rate limit
       }
+      consecRL = 0;
       if (!resp.ok) { stoppedMsg = data.error || 'Generation failed'; break; }
 
       if (Array.isArray(data.columns) && data.columns.length) gen.headers = data.columns;
@@ -382,7 +386,7 @@ async function sRun() {
 
   sol.running = true; sol.results = []; sol.headers = [];
   const startTs = Date.now(); const MAX_MS = 35 * 60 * 1000;
-  let stoppedMsg = '';
+  let stoppedMsg = '', consecRL = 0;
   $('sResultCard').classList.add('hidden');
   $('sRun').disabled = true;
   showProgress('s', 0, total, 'Starting…');
@@ -403,11 +407,15 @@ async function sRun() {
 
       const data = await resp.json().catch(() => ({}));
       if (isRateLimited(resp, data)) {
-        const w = parseWait(data.error);
-        if (w >= 95) { stoppedMsg = `Groq quota looks used up for now (needs ~${w}s). Solved ${sol.results.length}/${total} (saved). Try again later, or use a paid Groq key for big batches.`; break; }
+        consecRL++;
+        const suggested = parseWait(data.error);
+        // If quick retries keep failing, wait a FULL minute so the per-minute limit resets.
+        const w = consecRL >= 2 ? Math.max(suggested, 60) : suggested;
+        if (suggested > 70 && consecRL > 8) { stoppedMsg = `Groq quota is busy for a long time. Solved ${sol.results.length}/${total} (saved). Try later, or use a paid Groq key for big batches.`; break; }
         for (let s = w; s > 0; s--) { showProgress('s', sol.results.length, total, `Rate limit — waiting ${s}s (${sol.results.length}/${total} done)`); await sleep(1000); }
         continue; // keep retrying — never give up on a rate limit
       }
+      consecRL = 0;
       if (!resp.ok) { stoppedMsg = data.error || 'Solving failed'; break; }
 
       if (Array.isArray(data.columns) && data.columns.length) sol.headers = data.columns;
