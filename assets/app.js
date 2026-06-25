@@ -286,7 +286,8 @@ async function gRun() {
 
   gen.running = true; gen.results = []; gen.headers = [];
   const seen = new Set();
-  let stall = 0, rlWaits = 0;
+  let stall = 0, stoppedMsg = '';
+  const startTs = Date.now(); const MAX_MS = 35 * 60 * 1000;
   $('gResultCard').classList.add('hidden');
   $('gRun').disabled = true;
   showProgress('g', 0, target, `Starting…`);
@@ -294,6 +295,7 @@ async function gRun() {
 
   try {
     while (gen.results.length < target) {
+      if (Date.now() - startTs > MAX_MS) { stoppedMsg = `Stopped after a long run at ${gen.results.length}/${target} (saved).`; break; }
       const want = Math.min(CHUNK_GEN, target - gen.results.length);
       const qcolGuess = gen.headers.includes('question_text') ? 'question_text' : (gen.headers[0] || 'question_text');
       // Keep the avoid list SMALL (recent only, truncated) so requests stay cheap.
@@ -308,14 +310,12 @@ async function gRun() {
 
       const data = await resp.json().catch(() => ({}));
       if (isRateLimited(resp, data)) {
-        rlWaits++;
-        if (rlWaits > 12) { setStatus('gStatus', `Groq free-tier limit is busy. Generated ${gen.results.length} so far (saved). Click Generate again in a minute to add more.`, 'ok'); break; }
         const w = parseWait(data.error);
+        if (w >= 95) { stoppedMsg = `Groq quota looks used up for now (needs ~${w}s). Generated ${gen.results.length}/${target} (saved). Try later, or use a paid Groq key for big batches.`; break; }
         for (let s = w; s > 0; s--) { showProgress('g', gen.results.length, target, `Rate limit — waiting ${s}s (${gen.results.length}/${target} done)`); await sleep(1000); }
-        continue;
+        continue; // keep retrying — never give up on a rate limit
       }
-      rlWaits = 0;
-      if (!resp.ok) { setStatus('gStatus', data.error || 'Generation failed', 'err'); break; }
+      if (!resp.ok) { stoppedMsg = data.error || 'Generation failed'; break; }
 
       if (Array.isArray(data.columns) && data.columns.length) gen.headers = data.columns;
       const qcol = gen.headers.includes('question_text') ? 'question_text' : (gen.headers[0] || 'question_text');
@@ -329,16 +329,17 @@ async function gRun() {
       stall = added === 0 ? stall + 1 : 0;
       showProgress('g', gen.results.length, target, `${gen.results.length} / ${target} unique`);
       renderGenResults();
-      if (stall >= 4) { setStatus('gStatus', `Stopped early — the AI ran out of fresh variations at ${gen.results.length}.`, 'ok'); break; }
+      if (stall >= 4) { stoppedMsg = `The AI ran out of fresh variations at ${gen.results.length}.`; break; }
       if (gen.results.length < target) await sleep(CHUNK_DELAY);
     }
 
     if (gen.results.length) {
       renderGenResults();
       await saveBatch('generate', topic, gen.source, gen.headers, gen.results);
-      if (gen.results.length >= target) setStatus('gStatus', `Done — ${gen.results.length} unique questions generated & saved.`, 'ok');
       toast(`Generated ${gen.results.length} questions`);
     }
+    if (gen.results.length >= target) setStatus('gStatus', `Done — ${gen.results.length} unique questions generated & saved.`, 'ok');
+    else setStatus('gStatus', stoppedMsg || `Stopped at ${gen.results.length}/${target}.`, gen.results.length ? 'ok' : 'err');
   } finally {
     hideProgress('g'); gen.running = false; gRefresh();
   }
@@ -380,15 +381,17 @@ async function sRun() {
   const total = sol.rows.length;
 
   sol.running = true; sol.results = []; sol.headers = [];
-  let rlWaits = 0;
+  const startTs = Date.now(); const MAX_MS = 35 * 60 * 1000;
+  let stoppedMsg = '';
   $('sResultCard').classList.add('hidden');
   $('sRun').disabled = true;
   showProgress('s', 0, total, 'Starting…');
-  setStatus('sStatus', 'Solving in batches… watch the progress bar.', 'load');
+  setStatus('sStatus', 'Solving in batches… on the free tier this can take a few minutes for big files. Keep this tab open.', 'load');
 
   try {
     let i = 0;
     while (i < total) {
+      if (Date.now() - startTs > MAX_MS) { stoppedMsg = `Stopped after a long run at ${sol.results.length}/${total} (saved). Click "Add solutions" again to continue.`; break; }
       const slice = sol.rows.slice(i, i + CHUNK_SOLVE);
       let resp;
       try {
@@ -396,18 +399,16 @@ async function sRun() {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ rows: slice, model, extra }),
         });
-      } catch (e) { setStatus('sStatus', e.message, 'err'); break; }
+      } catch (e) { stoppedMsg = e.message; break; }
 
       const data = await resp.json().catch(() => ({}));
       if (isRateLimited(resp, data)) {
-        rlWaits++;
-        if (rlWaits > 14) { setStatus('sStatus', `Free-tier limit is busy. Solved ${sol.results.length}/${total} so far (saved). Run again in a minute for the rest.`, 'ok'); break; }
         const w = parseWait(data.error);
+        if (w >= 95) { stoppedMsg = `Groq quota looks used up for now (needs ~${w}s). Solved ${sol.results.length}/${total} (saved). Try again later, or use a paid Groq key for big batches.`; break; }
         for (let s = w; s > 0; s--) { showProgress('s', sol.results.length, total, `Rate limit — waiting ${s}s (${sol.results.length}/${total} done)`); await sleep(1000); }
-        continue; // retry same slice
+        continue; // keep retrying — never give up on a rate limit
       }
-      rlWaits = 0;
-      if (!resp.ok) { setStatus('sStatus', data.error || 'Solving failed', 'err'); break; }
+      if (!resp.ok) { stoppedMsg = data.error || 'Solving failed'; break; }
 
       if (Array.isArray(data.columns) && data.columns.length) sol.headers = data.columns;
       sol.results = sol.results.concat(data.rows || []);
@@ -420,9 +421,10 @@ async function sRun() {
     if (sol.results.length) {
       renderSolveResults();
       await saveBatch('solve', '', sol.source, sol.headers, sol.results);
-      setStatus('sStatus', `Done — ${sol.results.length} questions solved & saved.`, 'ok');
       toast(`Solved ${sol.results.length} questions`);
     }
+    if (sol.results.length >= total) setStatus('sStatus', `Done — all ${sol.results.length} questions solved & saved.`, 'ok');
+    else setStatus('sStatus', stoppedMsg || `Stopped at ${sol.results.length}/${total}.`, sol.results.length ? 'ok' : 'err');
   } finally {
     hideProgress('s'); sol.running = false; sRefresh();
   }
