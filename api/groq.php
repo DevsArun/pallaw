@@ -488,8 +488,8 @@ Output ONLY this JSON object (no markdown, no commentary):
 { "questions": [ { {$keysShape} } ] }
 PROMPT;
 
-    // Richer multi-step explanations need more room.
-    $maxTokens = (int) min(7500, max(1400, $count * 430 + 800));
+    // Richer explanations but within free-tier TPM limits.
+    $maxTokens = (int) min(4000, max(1000, $count * 220 + 400));
     $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.5);
     $questions = $parsed['questions'] ?? ($parsed['data'] ?? []);
     if (!is_array($questions)) {
@@ -551,7 +551,7 @@ Output ONLY this JSON object:
 { "rows": [ { "_index": 0, {$keysShape} } ] }
 PROMPT;
 
-    $maxTokens = (int) min(7500, max(1400, count($rows) * 430 + 800));
+    $maxTokens = (int) min(4000, max(1000, count($rows) * 220 + 400));
     $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.3);
     $filled    = $parsed['rows'] ?? ($parsed['questions'] ?? ($parsed['data'] ?? []));
     if (!is_array($filled)) {
