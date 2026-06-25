@@ -198,15 +198,26 @@ function groq_rate_limit_message(?array $body): string
  * @param int          $maxTokens  completion-token budget (keeps us under TPM limits)
  * @param string|null  $usedModel  (out) the model that actually produced the answer
  */
-function groq_chat(string $systemPrompt, string $userPrompt, string $model, int $maxTokens = 3000, float $temperature = 0.4, ?string &$usedModel = null): array
+function groq_chat(string $systemPrompt, string $userPrompt, string $model, int $maxTokens = 3000, float $temperature = 0.4, ?string &$usedModel = null, array $models = []): array
 {
     $key = (string) setting('groq_api_key');
     if ($key === '') {
         throw new RuntimeException('Groq API key is not set. Open Settings and add your key.');
     }
 
-    $preferred = $model !== '' ? $model : (string) setting('groq_model');
-    $chain     = groq_model_chain($preferred);
+    // The caller (frontend rotation) may hand us an explicit ordered list of
+    // models to try. Otherwise build the default chain from the preferred model.
+    $chain = [];
+    foreach ($models as $m) {
+        $m = is_string($m) ? trim($m) : '';
+        if ($m !== '' && in_array($m, GROQ_MODELS, true) && !in_array($m, $chain, true)) {
+            $chain[] = $m;
+        }
+    }
+    if (empty($chain)) {
+        $preferred = $model !== '' ? $model : (string) setting('groq_model');
+        $chain     = groq_model_chain($preferred);
+    }
     $maxTokens = max(800, min(8000, $maxTokens));
 
     $lastRate = null;   // remember the last rate-limit so we can report it if all fail
@@ -555,7 +566,7 @@ function verify_arithmetic(array &$row): void
  * @param string[]              $avoid     question texts already produced (skip dupes)
  * @return array<int,array<string,string>>
  */
-function groq_generate(array $columns, array $samples, string $topic, int $count, string $extra, string $model, array $avoid = [], ?string &$usedModel = null): array
+function groq_generate(array $columns, array $samples, string $topic, int $count, string $extra, string $model, array $avoid = [], ?string &$usedModel = null, array $models = []): array
 {
     $columnList = implode(', ', $columns);
     $keysShape  = implode(', ', array_map(fn ($c) => '"' . $c . '": "..."', $columns));
@@ -607,7 +618,12 @@ TASK:
 - Within each type, vary the numbers, values and scenario a lot so no two questions feel the same.
 - Fill option columns (option_a..option_d) with four plausible, distinct choices. Put ONLY the value — do NOT prefix options with "(A)", "(a)", "A.", etc. The letter belongs only in correct_option.
 - Set correct_option to just the LETTER of the right choice (A, B, C or D) and make sure it is genuinely correct.
-- EXPLANATION: give a clear multi-step shortcut solution — each step on its own line ("\n"), real numbers plugged in, ending with the answer. Example: "98 × 95 = ?" -> "98=100−2, 95=100−5\nCross: 98−5=93\nDeviations: 2×5=10\n→ 9310". Never a single generic sentence, never blank.
+- EXPLANATION (VERY IMPORTANT): teach it so a beginner with NO coaching understands. Follow these rules:
+  * Line 1 = the simplest trick/shortcut in a few words (e.g. "Trick: both numbers are near 100, use base-100").
+  * Then ONE step per line (separated by "\n"), plugging in the REAL numbers — never skip a step.
+  * Use plain, easy words and explain WHY each step works in a few words (like a friendly teacher at the board).
+  * Last line = the final answer, e.g. "Answer = 9310".
+  Example for "98 × 95 = ?": "Trick: both are close to 100.\n98 = 100-2, 95 = 100-5\nStep 1: cross subtract -> 98-5 = 93 (first digits)\nStep 2: multiply the gaps -> 2x5 = 10 (last two digits)\nJoin -> 9310\nAnswer = 9310". Never a single generic sentence, never blank.
 - Set "difficulty" to one of: easy, medium, hard.
 {$avoidLine}{$extraLine}
 Output ONLY this JSON object (no markdown, no commentary):
@@ -615,8 +631,8 @@ Output ONLY this JSON object (no markdown, no commentary):
 PROMPT;
 
     // Richer explanations but lean enough for free-tier TPM.
-    $maxTokens = (int) min(4500, max(900, $count * 230 + 400));
-    $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.5, $usedModel);
+    $maxTokens = (int) min(5200, max(1100, $count * 300 + 500));
+    $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.5, $usedModel, $models);
     $questions = $parsed['questions'] ?? ($parsed['data'] ?? []);
     if (!is_array($questions)) {
         $questions = [];
@@ -640,7 +656,7 @@ PROMPT;
  * @param array<int,array> $rows     raw uploaded rows (any keys)
  * @return array<int,array<string,string>>
  */
-function groq_solve(array $columns, array $rows, string $extra, string $model, ?string &$usedModel = null): array
+function groq_solve(array $columns, array $rows, string $extra, string $model, ?string &$usedModel = null, array $models = []): array
 {
     $columnList = implode(', ', $columns);
     $keysShape  = implode(', ', array_map(fn ($c) => '"' . $c . '": "..."', $columns));
@@ -675,7 +691,12 @@ TASK:
 - Keep the question text and all options EXACTLY as in the source (map them into question_text and option_a..option_d).
 - In option_a..option_d put ONLY the value — strip any leading "(A)", "(a)", "A." labels. The letter belongs only in correct_option.
 - Determine the correct answer and set correct_option to just its LETTER (A, B, C or D).
-- EXPLANATION (VERY IMPORTANT): write a clear, multi-STEP shortcut/trick solution. Put each step on its OWN line using "\n", plug in the real numbers, and end with the answer. Same depth as a good teacher's shortcut, e.g. "98 × 95 = ?" -> "Compare with 100:\n98 = 100 − 2, 95 = 100 − 5\nCross subtract: 98 − 5 = 93\nMultiply deviations: 2 × 5 = 10\nAnswer = 9310". Never generic, never blank.
+- EXPLANATION (VERY IMPORTANT): teach it so a beginner with NO coaching understands. Follow these rules:
+  * Line 1 = the simplest trick/shortcut in a few words (e.g. "Trick: numbers near 100 -> use base-100").
+  * Then ONE step per line (separated by "\n"), plugging in the REAL numbers — never skip a step.
+  * Use plain, easy words and explain WHY each step works in a few words (like a friendly teacher at the board).
+  * Last line = the final answer, e.g. "Answer = 9310".
+  Example for "98 × 95 = ?": "Trick: both are close to 100.\n98 = 100-2, 95 = 100-5\nStep 1: cross subtract -> 98-5 = 93 (first digits)\nStep 2: multiply the gaps -> 2x5 = 10 (last two digits)\nJoin -> 9310\nAnswer = 9310". Never generic, never blank.
 - Set "difficulty" to easy, medium or hard (infer it if the source has none).
 - Return ONE output object per input row, keeping "_index" so they can be matched. Do not invent new questions.
 {$extraLine}
@@ -683,8 +704,8 @@ Output ONLY this JSON object:
 { "rows": [ { "_index": 0, {$keysShape} } ] }
 PROMPT;
 
-    $maxTokens = (int) min(4500, max(900, count($rows) * 230 + 400));
-    $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.3, $usedModel);
+    $maxTokens = (int) min(5200, max(1100, count($rows) * 300 + 500));
+    $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.3, $usedModel, $models);
     $filled    = $parsed['rows'] ?? ($parsed['questions'] ?? ($parsed['data'] ?? []));
     if (!is_array($filled)) {
         $filled = [];

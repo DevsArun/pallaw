@@ -192,7 +192,6 @@ function waitSeconds(data) {
 const isRateLimited = (resp, data) => resp.status === 429 || RATE_RE.test((data && data.error) || '');
 // A limit waiting cannot fix (per-day quota) — server sets retryable:false.
 const isWaitFixable = (data) => !(data && data.retryable === false);
-const MAX_RL_RETRIES = 6; // give up after this many consecutive rate limits (no progress)
 
 // Friendly names for the toast/status when the backend auto-switches models.
 const MODEL_LABELS = {
@@ -207,6 +206,26 @@ function syncModelSelect(selectId, model) {
   const sel = $(selectId);
   if (sel && model && [...sel.options].some((o) => o.value === model)) sel.value = model;
 }
+
+/* ---------- smart model rotation with per-model cooldowns ----------
+   Each Groq model has its OWN quota. When a model is limited we "rest" it for
+   a while and use the others; once its rest is over it comes back into play.
+   This lets a big batch (e.g. 200 rows) finish on the free tier.            */
+const MODEL_ORDER = Object.keys(MODEL_LABELS);
+const PARK_MIN_MS = 60000;            // per-minute limit → rest that model 60s
+const LONG_PARK_MS = 30 * 60 * 1000;  // parked longer than this == daily-exhausted
+
+// Preferred model first, then the rest as fallbacks (no duplicates).
+function orderedModels(preferred) {
+  const out = [], seen = new Set();
+  for (const m of [preferred, ...MODEL_ORDER]) { if (m && !seen.has(m)) { seen.add(m); out.push(m); } }
+  return out;
+}
+const freeModels = (order, cd) => { const now = Date.now(); return order.filter((m) => (cd[m] || 0) <= now); };
+const nextFreeAt = (order, cd) => Math.min(...order.map((m) => cd[m] || 0));
+const allParkedLong = (order, cd) => { const now = Date.now(); return order.every((m) => (cd[m] || 0) > now + LONG_PARK_MS); };
+// Rest every model we just tried (they were all limited in this request).
+function parkModels(models, cd, ms) { const until = Date.now() + ms; for (const m of models) cd[m] = until; }
 
 /* ---------- clock ---------- */
 let clockTimer;
@@ -316,11 +335,12 @@ async function gRun() {
   if (!gen.samples.length) return setStatus('gStatus', 'Upload a sample file first.', 'err');
   const topic = $('gTopic').value.trim();
   const target = Math.max(1, Math.min(100, parseInt($('gCount').value, 10) || 5));
-  let model = $('gModel').value; const extra = $('gExtra').value.trim();
+  const extra = $('gExtra').value.trim();
+  const order = orderedModels($('gModel').value); const cooldown = {};
 
   gen.running = true; gen.results = []; gen.headers = [];
   const seen = new Set();
-  let stall = 0, stoppedMsg = '', consecRL = 0;
+  let stall = 0, stoppedMsg = '';
   const startTs = Date.now(); const MAX_MS = 35 * 60 * 1000;
   $('gResultCard').classList.add('hidden');
   $('gRun').disabled = true;
@@ -331,6 +351,17 @@ async function gRun() {
     while (gen.results.length < target) {
       if (Date.now() - startTs > MAX_MS) { stoppedMsg = `Stopped after a long run at ${gen.results.length}/${target} (saved).`; break; }
       const want = Math.min(CHUNK_GEN, target - gen.results.length);
+
+      // Pick models that aren't resting. If all are resting, wait for the soonest.
+      let avail = freeModels(order, cooldown);
+      if (!avail.length) {
+        if (allParkedLong(order, cooldown)) { stoppedMsg = `All Groq models hit their free-tier daily limit. Generated ${gen.results.length}/${target} (saved). Try again later or add a paid Groq key.`; break; }
+        const waitS = Math.max(1, Math.ceil((nextFreeAt(order, cooldown) - Date.now()) / 1000));
+        for (let s = waitS; s > 0; s--) { showProgress('g', gen.results.length, target, `All models resting — back in ${s}s (${gen.results.length}/${target} done)`); await sleep(1000); }
+        avail = freeModels(order, cooldown);
+        if (!avail.length) continue;
+      }
+
       const qcolGuess = gen.headers.includes('question_text') ? 'question_text' : (gen.headers[0] || 'question_text');
       // Keep the avoid list SMALL (recent only, truncated) so requests stay cheap.
       const avoid = gen.results.slice(-12).map((r) => String(r[qcolGuess] || '').slice(0, 90)).filter(Boolean);
@@ -338,38 +369,27 @@ async function gRun() {
       try {
         resp = await api(API.generate, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ samples: (gen.diverseSamples.length ? gen.diverseSamples : gen.samples).slice(0, 14), topic, count: want, model, extra, avoid }),
+          body: JSON.stringify({ samples: (gen.diverseSamples.length ? gen.diverseSamples : gen.samples).slice(0, 14), topic, count: want, model: avail[0], models: avail, extra, avoid }),
         });
       } catch (e) { setStatus('gStatus', e.message, 'err'); break; }
 
       const data = await resp.json().catch(() => ({}));
       if (isRateLimited(resp, data)) {
-        consecRL++;
-        // A per-DAY quota (or multi-hour wait) can't be fixed by waiting — stop now.
-        if (!isWaitFixable(data)) {
-          stoppedMsg = (data.error || 'Groq daily quota reached.') + ` Generated ${gen.results.length}/${target} (saved).`;
-          break;
-        }
-        // Waiting clearly isn't helping after several tries in a row — stop.
-        if (consecRL > MAX_RL_RETRIES) {
-          stoppedMsg = `Groq keeps rate-limiting after ${MAX_RL_RETRIES} retries. Generated ${gen.results.length}/${target} (saved). Try later, use a lighter model, or a paid Groq key.`;
-          break;
-        }
-        const suggested = waitSeconds(data);
-        // If quick retries keep failing, wait a FULL minute so the per-minute limit resets.
-        const w = consecRL >= 2 ? Math.max(suggested, 60) : suggested;
-        for (let s = w; s > 0; s--) { showProgress('g', gen.results.length, target, `Rate limit — waiting ${s}s (${gen.results.length}/${target} done)`); await sleep(1000); }
-        continue; // keep retrying recoverable per-minute limits
+        const secs = waitSeconds(data);
+        // Per-minute limit → rest these models 60s; daily → park them long.
+        const parkMs = isWaitFixable(data) ? Math.max(secs, 60) * 1000 : Math.max(secs * 1000, LONG_PARK_MS + 60000);
+        parkModels(avail, cooldown, parkMs);
+        setStatus('gStatus', `Limit hit — resting ${avail.map(modelLabel).join(', ')} and switching…`, 'load');
+        continue; // re-pick another free model, or wait if none left
       }
-      consecRL = 0;
       if (!resp.ok) { stoppedMsg = data.error || 'Generation failed'; break; }
 
-      // Backend may have auto-switched to a model that still has quota — adopt it
-      // for the remaining chunks so we don't keep hitting the throttled one.
-      if (data.model && data.model !== model) {
-        toast(`Auto-switched to ${modelLabel(data.model)} (previous model was limited)`);
-        setStatus('gStatus', `Switched to ${modelLabel(data.model)} — continuing…`, 'load');
-        model = data.model; syncModelSelect('gModel', model);
+      // Backend tried avail in order; if a later one answered, the skipped ones
+      // were limited — rest them 60s so we stop hammering them.
+      if (data.model) {
+        const idx = avail.indexOf(data.model);
+        if (idx > 0) parkModels(avail.slice(0, idx), cooldown, PARK_MIN_MS);
+        if (data.model !== order[0]) { syncModelSelect('gModel', data.model); setStatus('gStatus', `Using ${modelLabel(data.model)} (others resting)…`, 'load'); }
       }
 
       if (Array.isArray(data.columns) && data.columns.length) gen.headers = data.columns;
@@ -432,12 +452,13 @@ function sRefresh() { $('sRun').disabled = sol.running || !sol.rows.length; }
 async function sRun() {
   if (sol.running) return;
   if (!sol.rows.length) return setStatus('sStatus', 'Upload a file first.', 'err');
-  let model = $('sModel').value; const extra = $('sExtra').value.trim();
+  const extra = $('sExtra').value.trim();
+  const order = orderedModels($('sModel').value); const cooldown = {};
   const total = sol.rows.length;
 
   sol.running = true; sol.results = []; sol.headers = [];
   const startTs = Date.now(); const MAX_MS = 35 * 60 * 1000;
-  let stoppedMsg = '', consecRL = 0;
+  let stoppedMsg = '';
   $('sResultCard').classList.add('hidden');
   $('sRun').disabled = true;
   showProgress('s', 0, total, 'Starting…');
@@ -448,42 +469,40 @@ async function sRun() {
     while (i < total) {
       if (Date.now() - startTs > MAX_MS) { stoppedMsg = `Stopped after a long run at ${sol.results.length}/${total} (saved). Click "Add solutions" again to continue.`; break; }
       const slice = sol.rows.slice(i, i + CHUNK_SOLVE);
+
+      // Pick models that aren't resting. If all are resting, wait for the soonest.
+      let avail = freeModels(order, cooldown);
+      if (!avail.length) {
+        if (allParkedLong(order, cooldown)) { stoppedMsg = `All Groq models hit their free-tier daily limit. Solved ${sol.results.length}/${total} (saved). Click "Add solutions" again later, or add a paid Groq key.`; break; }
+        const waitS = Math.max(1, Math.ceil((nextFreeAt(order, cooldown) - Date.now()) / 1000));
+        for (let s = waitS; s > 0; s--) { showProgress('s', sol.results.length, total, `All models resting — back in ${s}s (${sol.results.length}/${total} done)`); await sleep(1000); }
+        avail = freeModels(order, cooldown);
+        if (!avail.length) continue;
+      }
+
       let resp;
       try {
         resp = await api(API.solve, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ rows: slice, model, extra }),
+          body: JSON.stringify({ rows: slice, model: avail[0], models: avail, extra }),
         });
       } catch (e) { stoppedMsg = e.message; break; }
 
       const data = await resp.json().catch(() => ({}));
       if (isRateLimited(resp, data)) {
-        consecRL++;
-        // A per-DAY quota (or multi-hour wait) can't be fixed by waiting — stop now.
-        if (!isWaitFixable(data)) {
-          stoppedMsg = (data.error || 'Groq daily quota reached.') + ` Solved ${sol.results.length}/${total} (saved).`;
-          break;
-        }
-        // Waiting clearly isn't helping after several tries in a row — stop.
-        if (consecRL > MAX_RL_RETRIES) {
-          stoppedMsg = `Groq keeps rate-limiting after ${MAX_RL_RETRIES} retries. Solved ${sol.results.length}/${total} (saved). Click "Add solutions" again later to continue, use a lighter model, or a paid Groq key.`;
-          break;
-        }
-        const suggested = waitSeconds(data);
-        // If quick retries keep failing, wait a FULL minute so the per-minute limit resets.
-        const w = consecRL >= 2 ? Math.max(suggested, 60) : suggested;
-        for (let s = w; s > 0; s--) { showProgress('s', sol.results.length, total, `Rate limit — waiting ${s}s (${sol.results.length}/${total} done)`); await sleep(1000); }
-        continue; // keep retrying recoverable per-minute limits
+        const secs = waitSeconds(data);
+        const parkMs = isWaitFixable(data) ? Math.max(secs, 60) * 1000 : Math.max(secs * 1000, LONG_PARK_MS + 60000);
+        parkModels(avail, cooldown, parkMs);
+        setStatus('sStatus', `Limit hit — resting ${avail.map(modelLabel).join(', ')} and switching…`, 'load');
+        continue; // re-pick another free model, or wait if none left
       }
-      consecRL = 0;
       if (!resp.ok) { stoppedMsg = data.error || 'Solving failed'; break; }
 
-      // Backend may have auto-switched to a model that still has quota — adopt it
-      // for the remaining chunks so we don't keep hitting the throttled one.
-      if (data.model && data.model !== model) {
-        toast(`Auto-switched to ${modelLabel(data.model)} (previous model was limited)`);
-        setStatus('sStatus', `Switched to ${modelLabel(data.model)} — continuing…`, 'load');
-        model = data.model; syncModelSelect('sModel', model);
+      // Backend tried avail in order; if a later one answered, rest the skipped ones.
+      if (data.model) {
+        const idx = avail.indexOf(data.model);
+        if (idx > 0) parkModels(avail.slice(0, idx), cooldown, PARK_MIN_MS);
+        if (data.model !== order[0]) { syncModelSelect('sModel', data.model); setStatus('sStatus', `Using ${modelLabel(data.model)} (others resting)…`, 'load'); }
       }
 
       if (Array.isArray(data.columns) && data.columns.length) sol.headers = data.columns;

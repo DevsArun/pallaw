@@ -159,7 +159,7 @@
             </div>
           </header>
 
-          <main class="mx-auto w-full max-w-6xl flex-1 p-4 sm:p-5">
+          <main class="mx-auto w-full max-w-7xl flex-1 p-4 sm:p-5">
             <!-- DASHBOARD -->
             <section data-view="dashboard">
               <p class="mb-5 text-sm text-slate-400">Overview of everything you've generated and solved.</p>
@@ -181,8 +181,8 @@
             <!-- GENERATE -->
             <section data-view="generate">
               <p class="mb-5 text-sm text-slate-400">Upload a sample (CSV or Excel) and generate as many <span class="font-medium text-slate-200">unique</span> MCQs as you want — each with its full solution. <span class="text-cyan-400">Output is always in your sample_questions.csv format.</span> Topic is optional — leave it empty and the AI infers it from your samples.</p>
-              <div class="grid gap-5 lg:grid-cols-[1.5fr_1fr]">
-                <div class="space-y-5">
+              <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+                <div class="space-y-5 min-w-0">
                   <div class="card p-5">
                     <h3 class="mb-3 flex items-center gap-2 text-sm font-semibold"><span class="flex h-5 w-5 items-center justify-center rounded-md bg-cyan-400 text-[11px] font-bold text-[#06222a]">1</span> Upload sample CSV</h3>
                     <label id="gDrop" class="group flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed border-[#2a3547] bg-[#0c111a] px-6 py-8 text-center transition hover:border-cyan-400/60 hover:bg-cyan-500/5">
@@ -239,8 +239,8 @@
             <!-- SOLVE -->
             <section data-view="solve">
               <p class="mb-5 text-sm text-slate-400">Upload your questions (CSV or Excel) and the AI solves each one — output comes back in your <span class="text-cyan-400">sample_questions.csv</span> format with a step-by-step solution, questions &amp; options unchanged.</p>
-              <div class="grid gap-5 lg:grid-cols-[1.5fr_1fr]">
-                <div class="space-y-5">
+              <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+                <div class="space-y-5 min-w-0">
                   <div class="card p-5">
                     <h3 class="mb-3 flex items-center gap-2 text-sm font-semibold"><span class="flex h-5 w-5 items-center justify-center rounded-md bg-cyan-400 text-[11px] font-bold text-[#06222a]">1</span> Upload questions CSV</h3>
                     <label id="sDrop" class="group flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed border-[#2a3547] bg-[#0c111a] px-6 py-8 text-center transition hover:border-cyan-400/60 hover:bg-cyan-500/5">

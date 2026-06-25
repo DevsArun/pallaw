@@ -22,6 +22,7 @@ $topic   = trim((string) ($in['topic'] ?? ''));
 $count   = max(1, min(MAX_ROWS, (int) ($in['count'] ?? 5)));
 $model   = trim((string) ($in['model'] ?? ''));
 $extra   = trim((string) ($in['extra'] ?? ''));
+$models  = isset($in['models']) && is_array($in['models']) ? array_values(array_filter(array_map('strval', $in['models']))) : [];
 $avoid   = isset($in['avoid']) && is_array($in['avoid']) ? array_values(array_filter(array_map('strval', $in['avoid']))) : [];
 
 if ($topic === '' && empty($samples)) {
@@ -32,7 +33,7 @@ $columns = canonical_columns();
 $usedModel = '';
 
 try {
-    $questions = groq_generate($columns, $samples, $topic, $count, $extra, $model, $avoid, $usedModel);
+    $questions = groq_generate($columns, $samples, $topic, $count, $extra, $model, $avoid, $usedModel, $models);
 } catch (GroqRateLimitException $e) {
     json_response(429, [
         'error'      => $e->getMessage(),

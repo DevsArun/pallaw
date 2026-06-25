@@ -22,6 +22,7 @@ $in    = read_json_body();
 $rows  = isset($in['rows']) && is_array($in['rows']) ? $in['rows'] : [];
 $model = trim((string) ($in['model'] ?? ''));
 $extra = trim((string) ($in['extra'] ?? ''));
+$models = isset($in['models']) && is_array($in['models']) ? array_values(array_filter(array_map('strval', $in['models']))) : [];
 
 if (empty($rows)) {
     json_response(400, ['error' => 'No question rows found in the uploaded file.']);
@@ -34,7 +35,7 @@ $columns = canonical_columns();
 $usedModel = '';
 
 try {
-    $filled = groq_solve($columns, $rows, $extra, $model, $usedModel);
+    $filled = groq_solve($columns, $rows, $extra, $model, $usedModel, $models);
 } catch (GroqRateLimitException $e) {
     json_response(429, [
         'error'      => $e->getMessage(),
