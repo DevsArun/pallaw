@@ -477,19 +477,15 @@ TASK:
 - Within each type, vary the numbers, values and scenario a lot so no two questions feel the same.
 - Fill option columns (option_a..option_d) with four plausible, distinct choices. Put ONLY the value — do NOT prefix options with "(A)", "(a)", "A.", etc. The letter belongs only in correct_option.
 - Set correct_option to just the LETTER of the right choice (A, B, C or D) and make sure it is genuinely correct.
-- EXPLANATION (VERY IMPORTANT): write a clear, multi-STEP shortcut/trick solution. Put each step on its OWN line using "\n". Plug in this question's real numbers and end with the final answer. Teach the fast method like a good teacher — never a single generic sentence, never blank. Match this depth:
-  "98 × 95 = ?" -> "Compare with 100:\n98 = 100 − 2,  95 = 100 − 5\nCross subtract: 98 − 5 = 93\nMultiply deviations: 2 × 5 = 10\nAnswer = 93 | 10 = 9310"
-  "35 × 35 = ?" -> "Number ends in 5:\nFirst digit × next: 3 × 4 = 12\nAppend 25\nAnswer = 1225"
-  "(41)² − (40)² = ?" -> "Use a² − b² = (a+b)(a−b)\n= (41+40)(41−40)\n= 81 × 1 = 81"
-  "12, 24, 48, 96, 192, 384, 768 (wrong number?)" -> "Each term × 2: 12→24→48→96→192→384.\n192 × 2 = 384, but 394 was given.\nSo 394 is wrong (should be 384)."
+- EXPLANATION: give a clear multi-step shortcut solution — each step on its own line ("\n"), real numbers plugged in, ending with the answer. Example: "98 × 95 = ?" -> "98=100−2, 95=100−5\nCross: 98−5=93\nDeviations: 2×5=10\n→ 9310". Never a single generic sentence, never blank.
 - Set "difficulty" to one of: easy, medium, hard.
 {$avoidLine}{$extraLine}
 Output ONLY this JSON object (no markdown, no commentary):
 { "questions": [ { {$keysShape} } ] }
 PROMPT;
 
-    // Richer explanations but within free-tier TPM limits.
-    $maxTokens = (int) min(4000, max(1000, $count * 220 + 400));
+    // Richer explanations but lean enough for free-tier TPM.
+    $maxTokens = (int) min(4500, max(900, $count * 230 + 400));
     $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.5);
     $questions = $parsed['questions'] ?? ($parsed['data'] ?? []);
     if (!is_array($questions)) {
@@ -521,7 +517,13 @@ function groq_solve(array $columns, array $rows, string $extra, string $model): 
 
     $indexed = [];
     foreach (array_values($rows) as $i => $row) {
-        $indexed[] = array_merge(['_index' => $i], is_array($row) ? $row : []);
+        $trim = ['_index' => $i];
+        if (is_array($row)) {
+            foreach ($row as $k => $v) {
+                $trim[$k] = mb_substr((string) (is_scalar($v) ? $v : json_encode($v)), 0, 200);
+            }
+        }
+        $indexed[] = $trim;
     }
     $rowsJson  = json_encode($indexed, JSON_UNESCAPED_UNICODE);
     $extraLine = $extra !== '' ? "- Extra instructions from the user: {$extra}\n" : '';
@@ -551,7 +553,7 @@ Output ONLY this JSON object:
 { "rows": [ { "_index": 0, {$keysShape} } ] }
 PROMPT;
 
-    $maxTokens = (int) min(4000, max(1000, count($rows) * 220 + 400));
+    $maxTokens = (int) min(4500, max(900, count($rows) * 230 + 400));
     $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.3);
     $filled    = $parsed['rows'] ?? ($parsed['questions'] ?? ($parsed['data'] ?? []));
     if (!is_array($filled)) {

@@ -15,9 +15,9 @@ const API = {
   download: (id) => `api/download.php?id=${encodeURIComponent(id)}`,
 };
 
-const CHUNK_GEN = 5;     // questions per request
-const CHUNK_SOLVE = 3;   // rows solved per request (keep small for free-tier TPM)
-const CHUNK_DELAY = 1500; // ms between chunks (eases rate limits on free tier)
+const CHUNK_GEN = 8;     // questions per request — fewer requests = less repeated overhead = less rate-limit
+const CHUNK_SOLVE = 8;   // rows solved per request
+const CHUNK_DELAY = 500; // ms between chunks
 const RATE_RE = /rate limit|tokens per minute|try again in|TPM/i;
 
 const $ = (id) => document.getElementById(id);
