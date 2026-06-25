@@ -13,6 +13,27 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/config.php';
 
+/**
+ * Rate-limit failure that carries enough context for the caller to decide
+ * whether waiting is worthwhile.
+ *
+ *  - $retryAfter : suggested wait in seconds (0 if unknown)
+ *  - $retryable  : false when the limit is a per-DAY quota (waiting a minute
+ *                  cannot fix it) — the UI should stop instead of looping.
+ */
+class GroqRateLimitException extends RuntimeException
+{
+    public float $retryAfter;
+    public bool  $retryable;
+
+    public function __construct(string $message, float $retryAfter = 0.0, bool $retryable = true)
+    {
+        parent::__construct($message, 429);
+        $this->retryAfter = $retryAfter;
+        $this->retryable  = $retryable;
+    }
+}
+
 /** Try hard to extract a JSON object/array from raw model text. */
 function extract_json(string $content): ?array
 {
@@ -83,23 +104,70 @@ function groq_is_rate_limited(int $code, ?array $body): bool
     return ($body['error']['code'] ?? '') === 'rate_limit_exceeded';
 }
 
-/** Pull the suggested wait (seconds) out of a rate-limit message. */
+/**
+ * Pull the suggested wait (seconds) out of a rate-limit message. Handles the
+ * various formats Groq uses: "2.5s", "49s", "7m30s", "1h2m3.45s".
+ */
 function groq_retry_after(?array $body): float
 {
     $msg = $body['error']['message'] ?? '';
-    if (is_string($msg) && preg_match('/try again in ([\d.]+)\s*s/i', $msg, $m)) {
-        return (float) $m[1];
+    if (!is_string($msg) || !preg_match('/try again in\s+([0-9hms.\s]+)/i', $msg, $m)) {
+        return 0.0;
     }
-    return 0.0;
+    $t = strtolower(trim($m[1]));
+    $seconds = 0.0; $matched = false;
+    if (preg_match('/([\d.]+)\s*h/', $t, $h)) { $seconds += (float) $h[1] * 3600; $matched = true; }
+    if (preg_match('/([\d.]+)\s*m/', $t, $mm)) { $seconds += (float) $mm[1] * 60; $matched = true; }
+    if (preg_match('/([\d.]+)\s*s/', $t, $s)) { $seconds += (float) $s[1]; $matched = true; }
+    if (!$matched && preg_match('/^[\d.]+$/', $t)) { $seconds = (float) $t; $matched = true; }
+    return $matched ? $seconds : 0.0;
+}
+
+/**
+ * Is this a per-DAY quota (TPD/RPD)? Those cannot be cleared by waiting a
+ * minute, so the UI must stop instead of retrying in a loop.
+ */
+function groq_is_daily_limit(?array $body): bool
+{
+    $msg = strtolower((string) ($body['error']['message'] ?? ''));
+    if ($msg === '') {
+        return false;
+    }
+    if (preg_match('/per day|\bTPD\b|\bRPD\b|tokens? per day|requests? per day/i', $msg)) {
+        return true;
+    }
+    // A multi-hour "try again" wait is effectively a daily quota too.
+    return groq_retry_after($body) > 600;
+}
+
+/** Format a seconds value as a human wait ("about 45s" / "about 1h 2m"). */
+function groq_format_wait(float $seconds): string
+{
+    if ($seconds <= 0) {
+        return 'a bit';
+    }
+    if ($seconds < 90) {
+        return 'about ' . (int) ceil($seconds) . 's';
+    }
+    $mins = (int) round($seconds / 60);
+    if ($mins < 60) {
+        return 'about ' . $mins . 'm';
+    }
+    $h = intdiv($mins, 60); $r = $mins % 60;
+    return 'about ' . $h . 'h' . ($r ? ' ' . $r . 'm' : '');
 }
 
 /** Friendly message for a rate-limit failure. */
 function groq_rate_limit_message(?array $body): string
 {
     $wait = groq_retry_after($body);
-    $waitTxt = $wait > 0 ? ('about ' . ceil($wait) . 's') : 'a bit';
+    if (groq_is_daily_limit($body)) {
+        return 'Groq daily free-tier quota is exhausted (limit per day reached), so waiting will not help right now'
+            . ($wait > 0 ? ' — it resets in ' . groq_format_wait($wait) . '.' : '.')
+            . ' Add a paid Groq API key in Settings, switch to a lighter model like "Llama 3.1 8B (instant)", or try again later.';
+    }
     return 'Groq rate limit reached (free tier allows a limited number of tokens per minute). '
-        . 'Please wait ' . $waitTxt . ' and try again, or reduce the count, or switch to a lighter model '
+        . 'Please wait ' . groq_format_wait($wait) . ' and try again, or reduce the count, or switch to a lighter model '
         . 'like "Llama 3.1 8B (instant)" in the settings dropdown.';
 }
 
@@ -143,8 +211,9 @@ function groq_chat(string $systemPrompt, string $userPrompt, string $model, int 
         }
     } elseif (groq_is_rate_limited($code, $body)) {
         // Do NOT fire more requests on a rate limit. Auto-retry only for short waits.
-        $wait = groq_retry_after($body);
-        if ($wait > 0 && $wait <= 12) {
+        $wait  = groq_retry_after($body);
+        $daily = groq_is_daily_limit($body);
+        if (!$daily && $wait > 0 && $wait <= 12) {
             sleep((int) ceil($wait) + 1);
             [$rc, $rb] = groq_request($strictBody, $key);
             if ($rc >= 200 && $rc < 300) {
@@ -153,9 +222,9 @@ function groq_chat(string $systemPrompt, string $userPrompt, string $model, int 
                     return $parsed;
                 }
             }
-            throw new RuntimeException(groq_rate_limit_message($rb ?? $body), 429);
+            throw new GroqRateLimitException(groq_rate_limit_message($rb ?? $body), groq_retry_after($rb ?? $body), !groq_is_daily_limit($rb ?? $body));
         }
-        throw new RuntimeException(groq_rate_limit_message($body), 429);
+        throw new GroqRateLimitException(groq_rate_limit_message($body), $wait, !$daily);
     } elseif ($body !== null) {
         // Groq sometimes returns a usable partial in failed_generation.
         $failed = $body['error']['failed_generation'] ?? '';
@@ -188,7 +257,7 @@ function groq_chat(string $systemPrompt, string $userPrompt, string $model, int 
             return $parsed;
         }
     } elseif (groq_is_rate_limited($code2, $body2)) {
-        throw new RuntimeException(groq_rate_limit_message($body2), 429);
+        throw new GroqRateLimitException(groq_rate_limit_message($body2), groq_retry_after($body2), !groq_is_daily_limit($body2));
     }
 
     // Build a helpful error.

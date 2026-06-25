@@ -34,6 +34,12 @@ $columns = canonical_columns();
 
 try {
     $filled = groq_solve($columns, $rows, $extra, $model);
+} catch (GroqRateLimitException $e) {
+    json_response(429, [
+        'error'      => $e->getMessage(),
+        'retryable'  => $e->retryable,
+        'retryAfter' => $e->retryAfter,
+    ]);
 } catch (Throwable $e) {
     $status = $e->getCode() === 429 ? 429 : 502;
     json_response($status, ['error' => $e->getMessage()]);

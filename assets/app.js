@@ -171,8 +171,28 @@ async function api(url, opts) {
   if (r.status === 401) { showLogin(); throw new Error('Session expired. Please sign in again.'); }
   return r;
 }
-function parseWait(msg) { const m = String(msg || '').match(/about\s+(\d+)\s*s|in\s+([\d.]+)\s*s/i); const n = m ? parseFloat(m[1] || m[2]) : 0; return Math.min(90, Math.max(5, Math.ceil(n))) || 20; }
+function parseWait(msg) {
+  const t = String(msg || '');
+  // Prefer an explicit "Xh Ym Zs" style wait if present.
+  const hm = t.match(/(?:about\s+)?(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:([\d.]+)\s*s)?/i);
+  if (hm && (hm[1] || hm[2] || hm[3])) {
+    const secs = (parseFloat(hm[1] || 0) * 3600) + (parseFloat(hm[2] || 0) * 60) + parseFloat(hm[3] || 0);
+    if (secs > 0) return Math.min(90, Math.max(5, Math.ceil(secs)));
+  }
+  const m = t.match(/about\s+(\d+)\s*s|in\s+([\d.]+)\s*s/i);
+  const n = m ? parseFloat(m[1] || m[2]) : 0;
+  return Math.min(90, Math.max(5, Math.ceil(n))) || 20;
+}
+// Seconds to wait before the next retry — trust the server's numeric hint first.
+function waitSeconds(data) {
+  const ra = data && Number(data.retryAfter);
+  if (ra && isFinite(ra) && ra > 0) return Math.min(90, Math.max(5, Math.ceil(ra)));
+  return parseWait(data && data.error);
+}
 const isRateLimited = (resp, data) => resp.status === 429 || RATE_RE.test((data && data.error) || '');
+// A limit waiting cannot fix (per-day quota) — server sets retryable:false.
+const isWaitFixable = (data) => !(data && data.retryable === false);
+const MAX_RL_RETRIES = 6; // give up after this many consecutive rate limits (no progress)
 
 /* ---------- clock ---------- */
 let clockTimer;
@@ -311,12 +331,21 @@ async function gRun() {
       const data = await resp.json().catch(() => ({}));
       if (isRateLimited(resp, data)) {
         consecRL++;
-        const suggested = parseWait(data.error);
+        // A per-DAY quota (or multi-hour wait) can't be fixed by waiting — stop now.
+        if (!isWaitFixable(data)) {
+          stoppedMsg = (data.error || 'Groq daily quota reached.') + ` Generated ${gen.results.length}/${target} (saved).`;
+          break;
+        }
+        // Waiting clearly isn't helping after several tries in a row — stop.
+        if (consecRL > MAX_RL_RETRIES) {
+          stoppedMsg = `Groq keeps rate-limiting after ${MAX_RL_RETRIES} retries. Generated ${gen.results.length}/${target} (saved). Try later, use a lighter model, or a paid Groq key.`;
+          break;
+        }
+        const suggested = waitSeconds(data);
         // If quick retries keep failing, wait a FULL minute so the per-minute limit resets.
         const w = consecRL >= 2 ? Math.max(suggested, 60) : suggested;
-        if (suggested > 70 && consecRL > 8) { stoppedMsg = `Groq quota is busy for a long time. Generated ${gen.results.length}/${target} (saved). Try later, or use a paid Groq key for big batches.`; break; }
         for (let s = w; s > 0; s--) { showProgress('g', gen.results.length, target, `Rate limit — waiting ${s}s (${gen.results.length}/${target} done)`); await sleep(1000); }
-        continue; // keep retrying — never give up on a rate limit
+        continue; // keep retrying recoverable per-minute limits
       }
       consecRL = 0;
       if (!resp.ok) { stoppedMsg = data.error || 'Generation failed'; break; }
@@ -408,12 +437,21 @@ async function sRun() {
       const data = await resp.json().catch(() => ({}));
       if (isRateLimited(resp, data)) {
         consecRL++;
-        const suggested = parseWait(data.error);
+        // A per-DAY quota (or multi-hour wait) can't be fixed by waiting — stop now.
+        if (!isWaitFixable(data)) {
+          stoppedMsg = (data.error || 'Groq daily quota reached.') + ` Solved ${sol.results.length}/${total} (saved).`;
+          break;
+        }
+        // Waiting clearly isn't helping after several tries in a row — stop.
+        if (consecRL > MAX_RL_RETRIES) {
+          stoppedMsg = `Groq keeps rate-limiting after ${MAX_RL_RETRIES} retries. Solved ${sol.results.length}/${total} (saved). Click "Add solutions" again later to continue, use a lighter model, or a paid Groq key.`;
+          break;
+        }
+        const suggested = waitSeconds(data);
         // If quick retries keep failing, wait a FULL minute so the per-minute limit resets.
         const w = consecRL >= 2 ? Math.max(suggested, 60) : suggested;
-        if (suggested > 70 && consecRL > 8) { stoppedMsg = `Groq quota is busy for a long time. Solved ${sol.results.length}/${total} (saved). Try later, or use a paid Groq key for big batches.`; break; }
         for (let s = w; s > 0; s--) { showProgress('s', sol.results.length, total, `Rate limit — waiting ${s}s (${sol.results.length}/${total} done)`); await sleep(1000); }
-        continue; // keep retrying — never give up on a rate limit
+        continue; // keep retrying recoverable per-minute limits
       }
       consecRL = 0;
       if (!resp.ok) { stoppedMsg = data.error || 'Solving failed'; break; }
