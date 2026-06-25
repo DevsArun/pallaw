@@ -140,6 +140,23 @@ function groq_is_daily_limit(?array $body): bool
     return groq_retry_after($body) > 600;
 }
 
+/**
+ * Is the model itself the problem (decommissioned / renamed / not found)?
+ * If so, switching to another model is the right move — not waiting.
+ */
+function groq_model_unavailable(int $code, ?array $body): bool
+{
+    $codeStr = strtolower((string) ($body['error']['code'] ?? ''));
+    $msg     = strtolower((string) ($body['error']['message'] ?? ''));
+    if (in_array($codeStr, ['model_not_found', 'model_decommissioned'], true)) {
+        return true;
+    }
+    if ($code === 404) {
+        return true;
+    }
+    return (bool) preg_match('/decommission|deprecated|does not exist|not found|no longer (?:available|supported)/i', $msg);
+}
+
 /** Format a seconds value as a human wait ("about 45s" / "about 1h 2m"). */
 function groq_format_wait(float $seconds): string
 {
@@ -172,22 +189,74 @@ function groq_rate_limit_message(?array $body): string
 }
 
 /**
- * Resilient chat call.
- *   - Strict JSON mode first; salvages partials and retries in plain mode.
- *   - Rate limits are handled separately: short waits auto-retry once,
- *     longer ones return a clear message WITHOUT burning more tokens.
+ * Resilient chat call with AUTOMATIC MODEL SWITCHING.
  *
- * @param int $maxTokens  completion-token budget (keeps us under TPM limits)
+ * Tries the user's chosen model first; if it is rate-limited or unavailable,
+ * it automatically moves on to the next model in GROQ_MODELS (each model has
+ * its own quota). Only when EVERY model is exhausted does it report failure.
+ *
+ * @param int          $maxTokens  completion-token budget (keeps us under TPM limits)
+ * @param string|null  $usedModel  (out) the model that actually produced the answer
  */
-function groq_chat(string $systemPrompt, string $userPrompt, string $model, int $maxTokens = 3000, float $temperature = 0.4): array
+function groq_chat(string $systemPrompt, string $userPrompt, string $model, int $maxTokens = 3000, float $temperature = 0.4, ?string &$usedModel = null): array
 {
     $key = (string) setting('groq_api_key');
     if ($key === '') {
         throw new RuntimeException('Groq API key is not set. Open Settings and add your key.');
     }
-    $model = $model !== '' ? $model : (string) setting('groq_model');
+
+    $preferred = $model !== '' ? $model : (string) setting('groq_model');
+    $chain     = groq_model_chain($preferred);
     $maxTokens = max(800, min(8000, $maxTokens));
 
+    $lastRate = null;   // remember the last rate-limit so we can report it if all fail
+    $lastErr  = null;   // remember the last hard error similarly
+
+    foreach ($chain as $candidate) {
+        try {
+            $result = groq_chat_once($systemPrompt, $userPrompt, $candidate, $maxTokens, $temperature, $key);
+            $usedModel = $candidate;
+            return $result;
+        } catch (GroqRateLimitException $e) {
+            // This model is throttled — keep it in mind, try the next model.
+            $lastRate = $e;
+            continue;
+        } catch (RuntimeException $e) {
+            if ($e->getCode() === 404) {
+                // Model gone/renamed — silently try the next one.
+                $lastErr = $e;
+                continue;
+            }
+            throw $e; // a genuine content failure: switching models won't help
+        }
+    }
+
+    // Every model failed. Prefer reporting the rate-limit (most common cause).
+    if ($lastRate !== null) {
+        $allDaily = !$lastRate->retryable;
+        $msg = $allDaily
+            ? 'All available Groq models have hit their free-tier DAILY limit, so waiting will not help right now'
+                . ($lastRate->retryAfter > 0 ? ' — the earliest one resets in ' . groq_format_wait($lastRate->retryAfter) . '.' : '.')
+                . ' Add a paid Groq API key in Settings, or try again later.'
+            : 'All available Groq models are rate-limited right now. Please wait '
+                . groq_format_wait($lastRate->retryAfter) . ' and it will resume automatically.';
+        throw new GroqRateLimitException($msg, $lastRate->retryAfter, $lastRate->retryable);
+    }
+    if ($lastErr !== null) {
+        throw $lastErr;
+    }
+    throw new RuntimeException('No Groq model is configured to call.');
+}
+
+/**
+ * One model attempt:
+ *   - Strict JSON mode first; salvages partials and retries in plain mode.
+ *   - On a rate limit it throws a GroqRateLimitException immediately (no waiting)
+ *     so the caller can switch to another model right away.
+ *   - On an unavailable model it throws RuntimeException(code 404) to switch.
+ */
+function groq_chat_once(string $systemPrompt, string $userPrompt, string $model, int $maxTokens, float $temperature, string $key): array
+{
     $messages = [
         ['role' => 'system', 'content' => $systemPrompt],
         ['role' => 'user', 'content' => $userPrompt],
@@ -209,22 +278,12 @@ function groq_chat(string $systemPrompt, string $userPrompt, string $model, int 
         if ($parsed !== null) {
             return $parsed;
         }
+    } elseif (groq_model_unavailable($code, $body)) {
+        throw new RuntimeException('Model "' . $model . '" is unavailable: ' . ($body['error']['message'] ?? 'not found'), 404);
     } elseif (groq_is_rate_limited($code, $body)) {
-        // Do NOT fire more requests on a rate limit. Auto-retry only for short waits.
-        $wait  = groq_retry_after($body);
-        $daily = groq_is_daily_limit($body);
-        if (!$daily && $wait > 0 && $wait <= 12) {
-            sleep((int) ceil($wait) + 1);
-            [$rc, $rb] = groq_request($strictBody, $key);
-            if ($rc >= 200 && $rc < 300) {
-                $parsed = extract_json($rb['choices'][0]['message']['content'] ?? '');
-                if ($parsed !== null) {
-                    return $parsed;
-                }
-            }
-            throw new GroqRateLimitException(groq_rate_limit_message($rb ?? $body), groq_retry_after($rb ?? $body), !groq_is_daily_limit($rb ?? $body));
-        }
-        throw new GroqRateLimitException(groq_rate_limit_message($body), $wait, !$daily);
+        // Don't wait here — let groq_chat switch models. If every model is
+        // throttled, the FRONTEND waits and retries the whole batch.
+        throw new GroqRateLimitException(groq_rate_limit_message($body), groq_retry_after($body), !groq_is_daily_limit($body));
     } elseif ($body !== null) {
         // Groq sometimes returns a usable partial in failed_generation.
         $failed = $body['error']['failed_generation'] ?? '';
@@ -256,6 +315,8 @@ function groq_chat(string $systemPrompt, string $userPrompt, string $model, int 
         if ($parsed !== null) {
             return $parsed;
         }
+    } elseif (groq_model_unavailable($code2, $body2)) {
+        throw new RuntimeException('Model "' . $model . '" is unavailable: ' . ($body2['error']['message'] ?? 'not found'), 404);
     } elseif (groq_is_rate_limited($code2, $body2)) {
         throw new GroqRateLimitException(groq_rate_limit_message($body2), groq_retry_after($body2), !groq_is_daily_limit($body2));
     }
@@ -494,7 +555,7 @@ function verify_arithmetic(array &$row): void
  * @param string[]              $avoid     question texts already produced (skip dupes)
  * @return array<int,array<string,string>>
  */
-function groq_generate(array $columns, array $samples, string $topic, int $count, string $extra, string $model, array $avoid = []): array
+function groq_generate(array $columns, array $samples, string $topic, int $count, string $extra, string $model, array $avoid = [], ?string &$usedModel = null): array
 {
     $columnList = implode(', ', $columns);
     $keysShape  = implode(', ', array_map(fn ($c) => '"' . $c . '": "..."', $columns));
@@ -555,7 +616,7 @@ PROMPT;
 
     // Richer explanations but lean enough for free-tier TPM.
     $maxTokens = (int) min(4500, max(900, $count * 230 + 400));
-    $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.5);
+    $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.5, $usedModel);
     $questions = $parsed['questions'] ?? ($parsed['data'] ?? []);
     if (!is_array($questions)) {
         $questions = [];
@@ -579,7 +640,7 @@ PROMPT;
  * @param array<int,array> $rows     raw uploaded rows (any keys)
  * @return array<int,array<string,string>>
  */
-function groq_solve(array $columns, array $rows, string $extra, string $model): array
+function groq_solve(array $columns, array $rows, string $extra, string $model, ?string &$usedModel = null): array
 {
     $columnList = implode(', ', $columns);
     $keysShape  = implode(', ', array_map(fn ($c) => '"' . $c . '": "..."', $columns));
@@ -623,7 +684,7 @@ Output ONLY this JSON object:
 PROMPT;
 
     $maxTokens = (int) min(4500, max(900, count($rows) * 230 + 400));
-    $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.3);
+    $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.3, $usedModel);
     $filled    = $parsed['rows'] ?? ($parsed['questions'] ?? ($parsed['data'] ?? []));
     if (!is_array($filled)) {
         $filled = [];

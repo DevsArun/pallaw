@@ -35,7 +35,41 @@ define('GROQ_URL', 'https://api.groq.com/openai/v1/chat/completions');
 define('DEFAULT_MODEL', 'llama-3.3-70b-versatile');
 define('MAX_ROWS', 100);
 
+/**
+ * All free-tier Groq models this app can use, in PREFERRED order.
+ * When one model hits its limit (or is unavailable), the app automatically
+ * falls back to the next one in this list. Each model has its OWN separate
+ * per-minute and per-day quota, so switching genuinely buys more capacity.
+ */
+define('GROQ_MODELS', [
+    'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant',
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
+]);
+
 define('SETTINGS_FILE', __DIR__ . '/settings.local.php');
+
+/**
+ * Build the ordered list of models to try: the user's preferred model first,
+ * then every other known model as a fallback (no duplicates).
+ *
+ * @return string[]
+ */
+function groq_model_chain(string $preferred): array
+{
+    $preferred = trim($preferred);
+    $chain = [];
+    if ($preferred !== '') {
+        $chain[] = $preferred;
+    }
+    foreach (GROQ_MODELS as $m) {
+        if (!in_array($m, $chain, true)) {
+            $chain[] = $m;
+        }
+    }
+    return $chain;
+}
 
 /**
  * The canonical OUTPUT schema. Read from sample_questions.csv so the export

@@ -31,9 +31,10 @@ if (count($rows) > MAX_ROWS) {
 }
 
 $columns = canonical_columns();
+$usedModel = '';
 
 try {
-    $filled = groq_solve($columns, $rows, $extra, $model);
+    $filled = groq_solve($columns, $rows, $extra, $model, $usedModel);
 } catch (GroqRateLimitException $e) {
     json_response(429, [
         'error'      => $e->getMessage(),
@@ -48,4 +49,5 @@ try {
 json_response(200, [
     'rows'    => $filled,
     'columns' => $columns,
+    'model'   => $usedModel,
 ]);

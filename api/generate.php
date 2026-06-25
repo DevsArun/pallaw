@@ -29,9 +29,10 @@ if ($topic === '' && empty($samples)) {
 }
 
 $columns = canonical_columns();
+$usedModel = '';
 
 try {
-    $questions = groq_generate($columns, $samples, $topic, $count, $extra, $model, $avoid);
+    $questions = groq_generate($columns, $samples, $topic, $count, $extra, $model, $avoid, $usedModel);
 } catch (GroqRateLimitException $e) {
     json_response(429, [
         'error'      => $e->getMessage(),
@@ -46,4 +47,5 @@ try {
 json_response(200, [
     'questions' => $questions,
     'columns'   => $columns,
+    'model'     => $usedModel,
 ]);

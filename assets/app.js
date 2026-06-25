@@ -194,6 +194,20 @@ const isRateLimited = (resp, data) => resp.status === 429 || RATE_RE.test((data 
 const isWaitFixable = (data) => !(data && data.retryable === false);
 const MAX_RL_RETRIES = 6; // give up after this many consecutive rate limits (no progress)
 
+// Friendly names for the toast/status when the backend auto-switches models.
+const MODEL_LABELS = {
+  'llama-3.3-70b-versatile': 'Llama 3.3 70B',
+  'llama-3.1-8b-instant': 'Llama 3.1 8B',
+  'openai/gpt-oss-120b': 'GPT-OSS 120B',
+  'openai/gpt-oss-20b': 'GPT-OSS 20B',
+};
+const modelLabel = (m) => MODEL_LABELS[m] || m || 'auto';
+// Keep the dropdown <select> in sync when the backend switches models.
+function syncModelSelect(selectId, model) {
+  const sel = $(selectId);
+  if (sel && model && [...sel.options].some((o) => o.value === model)) sel.value = model;
+}
+
 /* ---------- clock ---------- */
 let clockTimer;
 function startClock() {
@@ -302,7 +316,7 @@ async function gRun() {
   if (!gen.samples.length) return setStatus('gStatus', 'Upload a sample file first.', 'err');
   const topic = $('gTopic').value.trim();
   const target = Math.max(1, Math.min(100, parseInt($('gCount').value, 10) || 5));
-  const model = $('gModel').value, extra = $('gExtra').value.trim();
+  let model = $('gModel').value; const extra = $('gExtra').value.trim();
 
   gen.running = true; gen.results = []; gen.headers = [];
   const seen = new Set();
@@ -349,6 +363,14 @@ async function gRun() {
       }
       consecRL = 0;
       if (!resp.ok) { stoppedMsg = data.error || 'Generation failed'; break; }
+
+      // Backend may have auto-switched to a model that still has quota — adopt it
+      // for the remaining chunks so we don't keep hitting the throttled one.
+      if (data.model && data.model !== model) {
+        toast(`Auto-switched to ${modelLabel(data.model)} (previous model was limited)`);
+        setStatus('gStatus', `Switched to ${modelLabel(data.model)} — continuing…`, 'load');
+        model = data.model; syncModelSelect('gModel', model);
+      }
 
       if (Array.isArray(data.columns) && data.columns.length) gen.headers = data.columns;
       const qcol = gen.headers.includes('question_text') ? 'question_text' : (gen.headers[0] || 'question_text');
@@ -410,7 +432,7 @@ function sRefresh() { $('sRun').disabled = sol.running || !sol.rows.length; }
 async function sRun() {
   if (sol.running) return;
   if (!sol.rows.length) return setStatus('sStatus', 'Upload a file first.', 'err');
-  const model = $('sModel').value, extra = $('sExtra').value.trim();
+  let model = $('sModel').value; const extra = $('sExtra').value.trim();
   const total = sol.rows.length;
 
   sol.running = true; sol.results = []; sol.headers = [];
@@ -455,6 +477,14 @@ async function sRun() {
       }
       consecRL = 0;
       if (!resp.ok) { stoppedMsg = data.error || 'Solving failed'; break; }
+
+      // Backend may have auto-switched to a model that still has quota — adopt it
+      // for the remaining chunks so we don't keep hitting the throttled one.
+      if (data.model && data.model !== model) {
+        toast(`Auto-switched to ${modelLabel(data.model)} (previous model was limited)`);
+        setStatus('sStatus', `Switched to ${modelLabel(data.model)} — continuing…`, 'load');
+        model = data.model; syncModelSelect('sModel', model);
+      }
 
       if (Array.isArray(data.columns) && data.columns.length) sol.headers = data.columns;
       sol.results = sol.results.concat(data.rows || []);
