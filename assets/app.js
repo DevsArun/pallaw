@@ -15,8 +15,8 @@ const API = {
   download: (id) => `api/download.php?id=${encodeURIComponent(id)}`,
 };
 
-const CHUNK_GEN = 10;    // questions generated per request (fewer requests = less overhead = fewer rate limits)
-const CHUNK_SOLVE = 6;   // rows solved per request
+const CHUNK_GEN = 6;     // questions per request (smaller -> richer explanations, less truncation)
+const CHUNK_SOLVE = 5;   // rows solved per request
 const CHUNK_DELAY = 900; // ms between chunks
 const RATE_RE = /rate limit|tokens per minute|try again in|TPM/i;
 

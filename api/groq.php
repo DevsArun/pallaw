@@ -386,12 +386,17 @@ function verify_arithmetic(array &$row): void
     $ansStr   = (abs($ans - round($ans)) < 0.005) ? (string) (int) round($ans) : (string) round($ans, 2);
     $isApprox = (bool) preg_match('/approx/i', $q);
 
+    $expl = isset($row['explanation']) ? trim((string) $row['explanation']) : '';
+    $ansDigits  = preg_replace('/\D/', '', $ansStr);
+    $explHasAns = $ansDigits !== '' && strpos(preg_replace('/\D/', '', $expl), $ansDigits) !== false;
+
     if ($isApprox) {
-        // Approximation: pick the closest existing option (don't rewrite values).
+        // Approximation: pick the closest existing option (don't rewrite option values).
         if ($bestDiff > max(5.0, abs($ans) * 0.06)) { return; } // our reading likely mismatches
         if (array_key_exists('correct_option', $row)) { $row['correct_option'] = $best; }
         if (array_key_exists('explanation', $row)) {
-            $row['explanation'] = approx_explanation($q) ?: ('Approximate value ≈ ' . $ansStr . '.');
+            if ($expl === '') { $row['explanation'] = approx_explanation($q) ?: ('Approximate value ≈ ' . $ansStr . '.'); }
+            elseif (!$explHasAns) { $row['explanation'] = $expl . "\n✅ Answer ≈ " . $ansStr; }
         }
         return;
     }
@@ -400,7 +405,11 @@ function verify_arithmetic(array &$row): void
     if ($bestDiff > max(100.0, abs($ans) * 0.03)) { return; } // eval likely unrelated to this question
     if ($bestDiff > 0 && $bestCol !== null) { $row[$bestCol] = $ansStr; } // place exact answer into nearest option
     if (array_key_exists('correct_option', $row)) { $row['correct_option'] = $best; }
-    if (array_key_exists('explanation', $row)) { $row['explanation'] = trim(preg_replace('/\?/', $ansStr, $q, 1)); }
+    if (array_key_exists('explanation', $row)) {
+        // Keep the model's rich step-by-step text; only fix/ensure the final answer.
+        if ($expl === '') { $row['explanation'] = trim(preg_replace('/\?/', $ansStr, $q, 1)); }
+        elseif (!$explHasAns) { $row['explanation'] = $expl . "\n✅ Answer = " . $ansStr; }
+    }
 }
 
 /* ============================================================
@@ -468,16 +477,20 @@ TASK:
 - Within each type, vary the numbers, values and scenario a lot so no two questions feel the same.
 - Fill option columns (option_a..option_d) with four plausible, distinct choices. Put ONLY the value — do NOT prefix options with "(A)", "(a)", "A.", etc. The letter belongs only in correct_option.
 - Set correct_option to just the LETTER of the right choice (A, B, C or D) and make sure it is genuinely correct.
-- Write a GOOD "explanation": show the actual method and key steps with THIS question's real numbers, ending in the answer. Keep it 1-3 short lines, clear and specific — never reuse the same generic sentence across questions, never leave it blank. Example for "87 × 94 = ?": "87 × 94 = 87×90 + 87×4 = 7830 + 348 = 8178". Example for a number series: "Differences are +3, +5, +7…; 30 breaks the pattern (should be 31)."
+- EXPLANATION (VERY IMPORTANT): write a clear, multi-STEP shortcut/trick solution. Put each step on its OWN line using "\n". Plug in this question's real numbers and end with the final answer. Teach the fast method like a good teacher — never a single generic sentence, never blank. Match this depth:
+  "98 × 95 = ?" -> "Compare with 100:\n98 = 100 − 2,  95 = 100 − 5\nCross subtract: 98 − 5 = 93\nMultiply deviations: 2 × 5 = 10\nAnswer = 93 | 10 = 9310"
+  "35 × 35 = ?" -> "Number ends in 5:\nFirst digit × next: 3 × 4 = 12\nAppend 25\nAnswer = 1225"
+  "(41)² − (40)² = ?" -> "Use a² − b² = (a+b)(a−b)\n= (41+40)(41−40)\n= 81 × 1 = 81"
+  "12, 24, 48, 96, 192, 384, 768 (wrong number?)" -> "Each term × 2: 12→24→48→96→192→384.\n192 × 2 = 384, but 394 was given.\nSo 394 is wrong (should be 384)."
 - Set "difficulty" to one of: easy, medium, hard.
 {$avoidLine}{$extraLine}
 Output ONLY this JSON object (no markdown, no commentary):
 { "questions": [ { {$keysShape} } ] }
 PROMPT;
 
-    // Short explanations -> fewer tokens -> fewer rate limits.
-    $maxTokens = (int) min(6000, max(900, $count * 190 + 500));
-    $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.6);
+    // Richer multi-step explanations need more room.
+    $maxTokens = (int) min(7500, max(1400, $count * 430 + 800));
+    $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.5);
     $questions = $parsed['questions'] ?? ($parsed['data'] ?? []);
     if (!is_array($questions)) {
         $questions = [];
@@ -530,7 +543,7 @@ TASK:
 - Keep the question text and all options EXACTLY as in the source (map them into question_text and option_a..option_d).
 - In option_a..option_d put ONLY the value — strip any leading "(A)", "(a)", "A." labels. The letter belongs only in correct_option.
 - Determine the correct answer and set correct_option to just its LETTER (A, B, C or D).
-- Write a GOOD "explanation": show the actual method and key steps with the real numbers, ending in the answer. Keep it 1-3 short lines, clear and specific to this question — never a generic repeated sentence, never blank.
+- EXPLANATION (VERY IMPORTANT): write a clear, multi-STEP shortcut/trick solution. Put each step on its OWN line using "\n", plug in the real numbers, and end with the answer. Same depth as a good teacher's shortcut, e.g. "98 × 95 = ?" -> "Compare with 100:\n98 = 100 − 2, 95 = 100 − 5\nCross subtract: 98 − 5 = 93\nMultiply deviations: 2 × 5 = 10\nAnswer = 9310". Never generic, never blank.
 - Set "difficulty" to easy, medium or hard (infer it if the source has none).
 - Return ONE output object per input row, keeping "_index" so they can be matched. Do not invent new questions.
 {$extraLine}
@@ -538,7 +551,7 @@ Output ONLY this JSON object:
 { "rows": [ { "_index": 0, {$keysShape} } ] }
 PROMPT;
 
-    $maxTokens = (int) min(6000, max(900, count($rows) * 190 + 500));
+    $maxTokens = (int) min(7500, max(1400, count($rows) * 430 + 800));
     $parsed    = groq_chat($system, $user, $model, $maxTokens, 0.3);
     $filled    = $parsed['rows'] ?? ($parsed['questions'] ?? ($parsed['data'] ?? []));
     if (!is_array($filled)) {
